@@ -1,0 +1,21 @@
+SERVICES AGREEMENT
+
+This Agreement is effective as of 12 March 2026 between Northgate Systems Ltd
+and the Client.
+
+1. TERM. The initial term of this Agreement shall be twelve months. Thereafter
+this Agreement shall automatically renew for successive twelve month periods
+unless either party provides ninety (90) days prior written notice.
+
+2. LIABILITY. The Client agrees that there shall be unlimited liability for any
+breach of Section 5.
+
+3. INDEMNITY. The Client shall indemnify the Provider against any and all claims
+whatsoever arising out of or in any way related to the Services.
+
+4. AMENDMENTS. The Company may modify the terms at its sole discretion.
+
+5. GOVERNING LAW. This Agreement is governed by the courts of Delaware.
+
+6. DISPUTES. The parties agree to binding arbitration and waive any right to a
+jury trial.

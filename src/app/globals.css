@@ -1,0 +1,250 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Palette variables.
+
+   Tailwind tokens cover most of the work, but gradients, color-mix and the
+   default border colour need raw values. These mirror tailwind.config.ts —
+   change one, change the other.
+
+   Gold is an accent only. It appears on rules, labels, small marks and single
+   words. It is never a surface.
+--------------------------------------------------------------------------- */
+
+:root {
+  --bg: #04060c;
+  --bg-deep: #010308;
+  --bg-elev: #080d18;
+
+  --ink: #edeef3;
+  --ink-strong: #ffffff;
+  --muted: #8b94a9;
+
+  --gold: #c8a44d;
+  --gold-bright: #ecd79f;
+  --gold-deep: #8a6d22;
+  --spec: #fff8e6;
+
+  /* Hairlines are gold at low alpha, not white. This is most of the look. */
+  --line: rgb(200 164 77 / 0.13);
+  --line-strong: rgb(200 164 77 / 0.28);
+
+  --glass: rgb(8 13 24 / 0.55);
+  --glass-line: rgb(200 164 77 / 0.12);
+  --shadow-soft: 0 30px 80px -30px rgb(0 0 0 / 0.85);
+  --halo: rgb(200 164 77 / 0.2);
+
+  --type-edge: rgb(255 255 255 / 0.12);
+  --type-edge-soft: rgb(0 0 0 / 0.45);
+  --type-shadow: rgb(0 0 0 / 0.5);
+
+  --ease-lux: cubic-bezier(0.22, 1, 0.36, 1);
+  --shell-max: 84rem;
+  --edge: clamp(1.25rem, 4.5vw, 4rem);
+}
+
+@layer base {
+  /* Every border on the page defaults to a gold hairline. */
+  * {
+    border-color: var(--line);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-ink text-cream antialiased;
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+    overflow-x: clip;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--gold);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background: var(--gold);
+    color: var(--bg-deep);
+  }
+
+  @media (min-width: 1024px) {
+    ::-webkit-scrollbar {
+      width: 9px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-deep);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: color-mix(in oklab, var(--gold) 45%, transparent);
+      border-radius: 99px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--gold);
+    }
+  }
+}
+
+@layer components {
+  .shell {
+    width: 100%;
+    max-width: var(--shell-max);
+    margin-inline: auto;
+    padding-inline: var(--edge);
+  }
+
+  /* ------------------------------------------------------------ typography */
+
+  /* Small tracked-out label. The wide letter-spacing is what makes it read as
+     a marker rather than a heading. */
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.34em;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
+
+  /* Polished gold. A wide metallic ramp with a narrow specular band that
+     travels across the letterforms — the bright stop is what separates this
+     from a plain two-stop gradient. */
+  .gold-text {
+    background: linear-gradient(
+      100deg,
+      var(--gold-deep) 0%,
+      var(--gold) 16%,
+      var(--gold-bright) 30%,
+      var(--spec) 39%,
+      var(--gold-bright) 48%,
+      var(--gold) 63%,
+      var(--gold-deep) 80%,
+      var(--gold) 100%
+    );
+    background-size: 260% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    /* The fill is transparent, so an inherited text-shadow would show straight
+       through the glyphs. Depth comes from a drop shadow instead. */
+    text-shadow: none;
+    filter: drop-shadow(0 12px 26px color-mix(in oklab, var(--gold) 34%, transparent));
+    animation: sheen 8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  }
+
+  /* Layered depth for display type. Headline only — it is loud. */
+  .display-3d {
+    text-shadow:
+      0 1px 0 var(--type-edge),
+      0 3px 0 var(--type-edge-soft),
+      0 10px 26px var(--type-shadow),
+      0 30px 60px var(--type-shadow);
+  }
+
+  .data-label {
+    @apply font-mono text-[0.68rem] tracking-[0.14em] text-ash/65;
+  }
+
+  /* ----------------------------------------------------------------- atoms */
+
+  /* A rule that fades at both ends, so it never collides with the edge. */
+  .hairline {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--line-strong) 22%,
+      var(--line-strong) 78%,
+      transparent
+    );
+  }
+
+  .rule {
+    @apply h-px w-full;
+    background: linear-gradient(90deg, var(--line-strong), var(--line), transparent);
+  }
+
+  /* Fine film grain. Keeps large flat gradients from banding on wide screens
+     and stops the black reading as flat digital black. */
+  .grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.032;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Floating surface: navy glass with a gold hairline. */
+  .panel {
+    @apply relative rounded-2xl backdrop-blur-xl;
+    background: var(--glass);
+    border: 1px solid var(--glass-line);
+    box-shadow:
+      inset 0 1px 0 0 rgb(200 164 77 / 0.06),
+      var(--shadow-soft);
+  }
+
+  .panel-gold {
+    border-color: var(--line-strong);
+    box-shadow:
+      inset 0 1px 0 0 rgb(200 164 77 / 0.14),
+      0 30px 80px -46px rgb(200 164 77 / 0.35);
+  }
+
+  .hairline-grid {
+    background-image: linear-gradient(rgb(200 164 77 / 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(200 164 77 / 0.06) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .preserve-3d {
+    transform-style: preserve-3d;
+  }
+  .mask-fade-b {
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
+  }
+}
+
+@keyframes sheen {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Anyone who asks the OS for less motion gets a static, readable page. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Freeze the sheen mid-sweep rather than losing the metal entirely. */
+  .gold-text {
+    animation: none;
+    background-position: 40% 50%;
+  }
+}
