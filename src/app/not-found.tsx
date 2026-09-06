@@ -15,7 +15,7 @@ export default function NotFound() {
             <Button>Back to the overview</Button>
           </Link>
           <Link href="/console">
-            <Button variant="ghost">Open the console</Button>
+            <Button variant="ghost">Issue a Command</Button>
           </Link>
         </div>
       </div>

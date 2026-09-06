@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
-import { ArrowDown, Terminal } from 'lucide-react';
+import { ArrowDown, Camera, Terminal } from 'lucide-react';
 import { SceneCanvas } from '@/components/three/SceneCanvas';
 import { ZyronCore } from '@/components/three/ZyronCore';
 import { ParticleField } from '@/components/three/ParticleField';
@@ -44,7 +44,7 @@ export function Hero() {
       ref={section}
       onPointerMove={() => setIntensity(0.75)}
       onPointerLeave={() => setIntensity(0.3)}
-      className="relative flex min-h-[100svh] items-center overflow-hidden pt-28"
+      className="relative flex min-h-[100svh] items-center overflow-hidden pt-32 sm:pt-28"
     >
       <motion.div style={{ scale: sceneScale }} className="absolute inset-0">
         <SceneCanvas label="hero" lazy={false} camera={{ position: [0, 0.4, 7.2], fov: 45 }}>
@@ -60,7 +60,7 @@ export function Hero() {
 
       <motion.div
         style={{ y: copyY, opacity: copyOpacity }}
-        className="shell relative z-10 grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)]"
+        className="shell relative z-10 grid items-center gap-12 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.7fr)]"
       >
         <div>
           <motion.div
@@ -111,10 +111,22 @@ export function Hero() {
             className="mt-11 flex flex-wrap items-center gap-3"
           >
             <Link href="/console">
-              <Button icon={<Terminal className="h-4 w-4" />}>Give it a command</Button>
+              <Button
+                icon={<Terminal className="h-4 w-4" />}
+                className="px-7 text-[0.72rem] font-semibold uppercase tracking-[0.18em]"
+              >
+                Issue a Command
+              </Button>
             </Link>
             <Link href="#architecture">
               <Button variant="ghost">See how it routes</Button>
+            </Link>
+            <Link
+              href="/mood"
+              className="inline-flex items-center gap-2 px-2 text-sm text-ash transition-colors hover:text-gold"
+            >
+              <Camera className="h-4 w-4" />
+              Check in on yourself
             </Link>
           </motion.div>
 
@@ -124,7 +136,7 @@ export function Hero() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 1.7, duration: 1 }}
-            className="mt-16 max-w-xl"
+            className="mt-12 max-w-xl sm:mt-16"
           >
             <div className="hairline" />
             <div className="grid grid-cols-3">
@@ -133,12 +145,12 @@ export function Hero() {
                   key={item.k}
                   className={
                     i > 0
-                      ? 'border-l border-[var(--line)] py-5 pl-5'
-                      : 'py-5 pr-5'
+                      ? 'border-l border-[var(--line)] py-4 pl-3 sm:py-5 sm:pl-5'
+                      : 'py-4 pr-3 sm:py-5 sm:pr-5'
                   }
                 >
-                  <dd className="font-display text-2xl text-cream">{item.v}</dd>
-                  <dt className="mt-1.5 text-[0.72rem] leading-tight text-ash">{item.k}</dt>
+                  <dd className="font-display text-xl text-cream sm:text-2xl">{item.v}</dd>
+                  <dt className="mt-1.5 text-[0.68rem] leading-tight text-ash sm:text-[0.72rem]">{item.k}</dt>
                 </div>
               ))}
             </div>

@@ -12,7 +12,7 @@ import type { AgentModule } from '@/types';
  */
 export const MODULES: AgentModule[] = [
   {
-    id: 1, code: 'BRF', name: 'Daily Executive Briefing', tagline: 'Your day, decided before you wake',
+    id: 1, code: 'BRF', name: 'Your Morning Briefing', tagline: 'Your day, decided before you wake',
     functionality: 'One synthesised morning sync across mail, calendar, tasks and biometrics.',
     execution: 'Reads overnight mail, resolves calendar collisions, then places deep-work blocks inside your measured peak-energy window.',
     inputs: ['Calendar', 'Mail', 'Tasks', 'Sleep data'],
@@ -21,7 +21,7 @@ export const MODULES: AgentModule[] = [
     tier: 'core', risk: 'autonomous', icon: Sunrise,
   },
   {
-    id: 2, code: 'DSR', name: 'Contextual Deep Prep', tagline: 'Walk in knowing everything',
+    id: 2, code: 'DSR', name: 'Meeting Prep', tagline: 'Walk in knowing everything',
     functionality: 'A one-page dossier fifteen minutes before every meeting.',
     execution: 'Pulls the agenda, the thread history, past decisions with this counterpart and the relevant drive files into a single briefing.',
     inputs: ['Drive', 'Mail threads', 'Chat logs', 'Decision log'],
@@ -30,7 +30,7 @@ export const MODULES: AgentModule[] = [
     tier: 'core', risk: 'autonomous', icon: FileSearch,
   },
   {
-    id: 3, code: 'CMS', name: 'Communication Proxy', tagline: 'Speaks in your voice, waits for your nod',
+    id: 3, code: 'CMS', name: 'Message Handler', tagline: 'Speaks in your voice, waits for your nod',
     functionality: 'Handles WhatsApp, email and voice notes end to end.',
     execution: 'Transcribes voice notes, checks your calendar before replying to a scheduling request, and queues the finished draft for one-tap dispatch.',
     inputs: ['WhatsApp API', 'Voice notes', 'Mail'],
@@ -39,7 +39,7 @@ export const MODULES: AgentModule[] = [
     tier: 'core', risk: 'approval', icon: MessagesSquare,
   },
   {
-    id: 4, code: 'BIO', name: 'Bio-Sync Friction Guard', tagline: 'Protects the operator, not just the schedule',
+    id: 4, code: 'BIO', name: 'Burnout Guard', tagline: 'Stops you working yourself into the ground',
     functionality: 'Balances workload against what your body can actually carry.',
     execution: 'Watches HRV, sleep debt and meeting density. After four unbroken hours it blocks a recovery buffer and demotes low-priority work.',
     inputs: ['Wearable', 'HRV', 'Sleep cycles'],
@@ -48,7 +48,7 @@ export const MODULES: AgentModule[] = [
     tier: 'core', risk: 'autonomous', icon: HeartPulse,
   },
   {
-    id: 5, code: 'CLT', name: 'Closed-Loop Tracker', tagline: 'Every promise, tracked to done',
+    id: 5, code: 'CLT', name: 'Promise Tracker', tagline: 'Every promise, tracked to done',
     functionality: 'Extracts commitments from anything you say or write.',
     execution: 'Detects lines like "I will send the deck by Tuesday", files them with an owner and a date, then runs the follow-up sequence itself.',
     inputs: ['Mail', 'Meeting notes', 'Voice logs'],
@@ -57,7 +57,7 @@ export const MODULES: AgentModule[] = [
     tier: 'core', risk: 'autonomous', icon: ListChecks,
   },
   {
-    id: 6, code: 'PSG', name: 'Predictive Schedule Guard', tagline: 'Moves the day before it breaks',
+    id: 6, code: 'PSG', name: 'Schedule Protector', tagline: 'Moves the day before it breaks',
     functionality: 'Live traffic, transit and overrun awareness across the calendar.',
     execution: 'When the gap between a physical and a virtual meeting collapses, it drafts the shift message before you notice the problem.',
     inputs: ['Location', 'Traffic', 'Calendar'],
@@ -66,7 +66,7 @@ export const MODULES: AgentModule[] = [
     tier: 'core', risk: 'approval', icon: Route,
   },
   {
-    id: 7, code: 'NEG', name: 'Negotiation Simulator', tagline: 'Lose the rehearsal, win the room',
+    id: 7, code: 'NEG', name: 'Negotiation Practice', tagline: 'Lose the rehearsal, win the room',
     functionality: 'A sparring counterparty for deals, raises and disputes.',
     execution: 'Adopts the other side\'s persona from what it knows of them, runs the mock exchange, then names your weak lines and the pressure points you missed.',
     inputs: ['Counterparty profile', 'Deal terms'],
@@ -75,7 +75,7 @@ export const MODULES: AgentModule[] = [
     tier: 'core', risk: 'autonomous', icon: Swords,
   },
   {
-    id: 8, code: 'FIN', name: 'Financial Leakage Scanner', tagline: 'Finds the money quietly leaving',
+    id: 8, code: 'FIN', name: 'Money Leak Finder', tagline: 'Finds the money quietly leaving',
     functionality: 'Continuous audit of invoices, receipts and recurring charges.',
     execution: 'OCRs receipts, matches them against statements, and flags duplicate billing, idle subscriptions and silent price rises with a cancellation ready to send.',
     inputs: ['Receipts', 'Invoices', 'Card feeds'],
@@ -84,7 +84,7 @@ export const MODULES: AgentModule[] = [
     tier: 'core', risk: 'approval', icon: Receipt,
   },
   {
-    id: 9, code: 'REP', name: 'Reputation Guardian', tagline: 'Reads the room before it turns',
+    id: 9, code: 'REP', name: 'Online Reputation Watch', tagline: 'Spots bad press before it spreads',
     functionality: 'Watches mentions, reviews and press about you and your company.',
     execution: 'Monitors news APIs and social listening. On a negative sentiment spike it prepares a response and escalates it; on a positive one it suggests amplification.',
     inputs: ['News APIs', 'Social mentions', 'Review sites'],
@@ -93,7 +93,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'approval', icon: Radar,
   },
   {
-    id: 10, code: 'DJB', name: 'Decision Journal & Bias Audit', tagline: 'Your judgement, measured',
+    id: 10, code: 'DJB', name: 'Decision Journal', tagline: 'Shows you the mistakes you keep repeating',
     functionality: 'Logs major decisions with the reasoning behind them.',
     execution: 'Captures the rationale at the moment of decision, then reopens it at 30, 60 and 90 days to compare intent against outcome and surface repeat biases.',
     inputs: ['Voice notes', 'Chat logs', 'Outcomes'],
@@ -102,7 +102,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'autonomous', icon: Scale,
   },
   {
-    id: 11, code: 'DEL', name: 'Delegation Tracker', tagline: 'Holds the team to the date',
+    id: 11, code: 'DEL', name: 'Team Follow-Up', tagline: 'Holds the team to the date',
     functionality: 'Tracks what you handed off, not only what you took on.',
     execution: 'Reads "I\'ll assign this to Sara" out of a thread, builds the delegation record and nudges the assignee before the deadline lands.',
     inputs: ['Mail', 'Chat', 'Task boards'],
@@ -111,7 +111,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'approval', icon: Users,
   },
   {
-    id: 12, code: 'CNT', name: 'Continuity Protocol', tagline: 'If you go quiet, the business does not',
+    id: 12, code: 'CNT', name: 'Emergency Handover', tagline: 'If you go quiet, the business does not',
     functionality: 'A dead-man\'s switch for your operational knowledge.',
     execution: 'After a configured silence it checks in across call, SMS and WhatsApp. With no answer it releases an encrypted package — pending approvals, live deals, key contacts — to your named trustee.',
     inputs: ['Interaction telemetry', 'Trustee registry'],
@@ -120,7 +120,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'sealed', icon: ShieldAlert,
   },
   {
-    id: 13, code: 'ROI', name: 'Recommendation ROI Tracker', tagline: 'The agent grades itself',
+    id: 13, code: 'ROI', name: 'Agent Report Card', tagline: 'Proves whether its advice actually helped',
     functionality: 'Audits the outcome of every recommendation ZYRON has made.',
     execution: 'Follows each suggestion — reject the deal, cancel the tool, take the meeting — to its result and reports acceptance rate, hours reclaimed and capital saved monthly.',
     inputs: ['Agent decision log', 'Financials', 'Calendar'],
@@ -129,7 +129,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'autonomous', icon: TrendingUp,
   },
   {
-    id: 14, code: 'TRV', name: 'Travel Autopilot', tagline: 'Re-plans while you are still boarding',
+    id: 14, code: 'TRV', name: 'Travel Manager', tagline: 'Re-plans while you are still boarding',
     functionality: 'The whole travel chain, from confirmation mail to ground transport.',
     execution: 'Parses bookings into one itinerary. On a delay it holds alternate flights, shifts the hotel window, moves the pickup and files the claim.',
     inputs: ['Booking mail', 'Flight APIs', 'Passport records'],
@@ -138,7 +138,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'approval', icon: Plane,
   },
   {
-    id: 15, code: 'DOC', name: 'Contract Intelligence', tagline: 'Reads the clause you would skim',
+    id: 15, code: 'DOC', name: 'Contract Checker', tagline: 'Reads the clause you would skim',
     functionality: 'Plain-language risk analysis of any agreement you forward it.',
     execution: 'Flags non-standard termination windows, liability exposure, auto-renewal traps, and tracks every expiry date it finds.',
     inputs: ['Uploaded PDFs', 'Signed agreements'],
@@ -147,7 +147,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'autonomous', icon: FileWarning,
   },
   {
-    id: 16, code: 'HHM', name: 'Household Operations', tagline: 'The other job, handled',
+    id: 16, code: 'HHM', name: 'Home & Bills Manager', tagline: 'The other job, handled',
     functionality: 'Runs the domestic operating load alongside the professional one.',
     execution: 'Tracks utility due dates, school and clinic schedules, service intervals for the car and the AC, and predicts replenishment from consumption patterns.',
     inputs: ['Bills', 'Family calendar', 'Purchase history'],
@@ -156,7 +156,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'approval', icon: Home,
   },
   {
-    id: 17, code: 'CMP', name: 'Compliance Sentinel', tagline: 'Deadlines that carry penalties',
+    id: 17, code: 'CMP', name: 'Tax & Deadline Alerts', tagline: 'Deadlines that carry penalties',
     functionality: 'Tax, licensing and certification dates with escalating alerts.',
     execution: 'Maintains the filing calendar and the document checklist your accountant will ask for, warning at two weeks and again at three days.',
     inputs: ['Regulatory calendars', 'Licence registry'],
@@ -165,7 +165,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'autonomous', icon: Landmark,
   },
   {
-    id: 18, code: 'PRP', name: 'Property Watch', tagline: 'Passive assets, actively watched',
+    id: 18, code: 'PRP', name: 'Rent & Property Tracker', tagline: 'Passive assets, actively watched',
     functionality: 'Monitoring for rentals and property holdings.',
     execution: 'Tracks rent cycles and sends the tenant reminder on your approval, keeps the property tax and utility schedule, and summarises local rate movement.',
     inputs: ['Rent schedule', 'Tax calendar', 'Listing data'],
@@ -174,7 +174,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'approval', icon: Building2,
   },
   {
-    id: 19, code: 'CRS', name: 'Crisis Coordinator', tagline: 'Calm, pre-loaded, on one command',
+    id: 19, code: 'CRS', name: 'Emergency Mode', tagline: 'One command, everyone who matters is told',
     functionality: 'Stakeholder mobilisation for the moment things break.',
     execution: 'On the trigger phrase it stages pre-approved messages for counsel, PR and family, gathers the relevant documents in one place, and leaves you only the approve-or-edit decision.',
     inputs: ['Trigger phrase', 'Stakeholder registry'],
@@ -183,7 +183,7 @@ export const MODULES: AgentModule[] = [
     tier: 'extended', risk: 'sealed', icon: Siren,
   },
   {
-    id: 20, code: 'LGY', name: 'Legacy & Memory Vault', tagline: 'What you would want remembered',
+    id: 20, code: 'LGY', name: 'Personal Memory Vault', tagline: 'What you would want remembered',
     functionality: 'A private archive of thinking, voice and turning points.',
     execution: 'Compiles conversations, decisions and recordings into an encrypted personal archive, releasable to family on your terms.',
     inputs: ['Voice memories', 'Decision history'],
@@ -192,7 +192,7 @@ export const MODULES: AgentModule[] = [
     tier: 'signature', risk: 'sealed', icon: Archive,
   },
   {
-    id: 21, code: 'VIP', name: 'Relationship Intelligence', tagline: 'Remembers what people care about',
+    id: 21, code: 'VIP', name: 'People & Birthdays', tagline: 'Remembers what people care about',
     functionality: 'A living profile for every person who matters.',
     execution: 'Holds preferences, milestones and history, then prompts you before the meeting and suggests the message or gift that actually fits.',
     inputs: ['Contacts', 'Interaction history', 'Milestones'],
@@ -201,7 +201,7 @@ export const MODULES: AgentModule[] = [
     tier: 'signature', risk: 'autonomous', icon: Contact,
   },
   {
-    id: 22, code: 'BRD', name: 'Signature Style Guardian', tagline: 'One voice, everywhere',
+    id: 22, code: 'BRD', name: 'Your Writing Voice', tagline: 'One voice, everywhere',
     functionality: 'Keeps public and professional output sounding like you.',
     execution: 'Learns your register from your own archive and flags outgoing posts, statements and mail that drift from it before they ship.',
     inputs: ['Public posts', 'Sent mail', 'Style corpus'],
@@ -210,7 +210,7 @@ export const MODULES: AgentModule[] = [
     tier: 'signature', risk: 'approval', icon: PenTool,
   },
   {
-    id: 23, code: 'PRV', name: 'Data Sovereignty Layer', tagline: 'The constitution, not a setting',
+    id: 23, code: 'PRV', name: 'Privacy & Your Data', tagline: 'Your data stays yours — enforced, not promised',
     functionality: 'Your data stays yours — enforced, not promised.',
     execution: 'On-device processing wherever possible, end-to-end encryption elsewhere, a full audit trail of every access, and a standing delete-everything command.',
     inputs: ['All data streams'],

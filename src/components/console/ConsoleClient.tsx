@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, Loader2, PanelLeft, PanelLeftClose, Paperclip, Upload } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowUp, Camera, Inbox, LayoutGrid, Loader2, PanelLeft, PanelLeftClose, Paperclip, Upload, X } from 'lucide-react';
 import { SceneCanvas } from '@/components/three/SceneCanvas';
 import { ZyronCore } from '@/components/three/ZyronCore';
 import { ParticleField } from '@/components/three/ParticleField';
@@ -52,6 +53,8 @@ export function ConsoleClient() {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [railOpen, setRailOpen] = useState(true);
+  /** Which panel is showing as a sheet on narrow screens. */
+  const [sheet, setSheet] = useState<'modules' | 'queue' | null>(null);
   const [activeModules, setActiveModules] = useState<string[]>([]);
 
   const [dragging, setDragging] = useState(false);
@@ -391,39 +394,19 @@ export function ConsoleClient() {
                   <span className="eyebrow">Modules</span>
                   <span className="font-mono text-[0.65rem] text-signal-ok">23 online</span>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-6">
-                  {railModules.map((mod) => {
-                    const lit = activeModules.includes(mod.code);
-                    return (
-                      <button
-                        key={mod.code}
-                        onClick={() => send(`Run ${mod.name} and report back.`)}
-                        className={cn(
-                          'group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors',
-                          lit ? 'bg-gold/12' : 'hover:bg-cream/[0.04]',
-                        )}
-                      >
-                        <mod.icon
-                          className={cn(
-                            'h-3.5 w-3.5 shrink-0 transition-colors',
-                            lit ? 'text-gold' : 'text-ash/60 group-hover:text-ash',
-                          )}
-                        />
-                        <span
-                          className={cn(
-                            'truncate text-xs transition-colors',
-                            lit ? 'text-cream' : 'text-ash group-hover:text-cream',
-                          )}
-                        >
-                          {mod.name}
-                        </span>
-                        <span className="ml-auto font-mono text-[0.6rem] text-ash/40">
-                          {mod.code}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+
+                <Link
+                  href="/mood"
+                  className="mx-2 mb-2 flex items-center gap-3 rounded-xl border border-gold/25 bg-gold/[0.06] px-3 py-2.5 text-xs text-gold transition-colors hover:bg-gold/12"
+                >
+                  <Camera className="h-3.5 w-3.5 shrink-0" />
+                  Check in on yourself
+                </Link>
+                <ModuleList
+                  modules={railModules}
+                  active={activeModules}
+                  onPick={(name) => send(`Run ${name} and report back.`)}
+                />
               </div>
             </motion.aside>
           )}
@@ -440,6 +423,28 @@ export function ConsoleClient() {
               {railOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
             </button>
             <span className="text-sm text-cream">Command stream</span>
+
+            {/* Below lg the module rail is gone; below xl the queue is too.
+                These put both back within one tap instead of leaving the
+                whole agent unreachable on a phone. */}
+            <button
+              onClick={() => setSheet('modules')}
+              className="ml-2 rounded-lg p-1.5 text-ash transition-colors hover:text-gold lg:hidden"
+              aria-label="Show modules"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setSheet('queue')}
+              className="relative rounded-lg p-1.5 text-ash transition-colors hover:text-gold xl:hidden"
+              aria-label="Show approvals and commitments"
+            >
+              <Inbox className="h-4 w-4" />
+              {pendingCount > 0 && (
+                <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-gold" />
+              )}
+            </button>
+
             <span className="ml-auto flex items-center gap-2 font-mono text-[0.68rem] text-ash">
               <span
                 className={cn(
@@ -552,6 +557,105 @@ export function ConsoleClient() {
           />
         </aside>
       </div>
+
+      {/* Slide-over for narrow screens. Same components as the desktop rails,
+          so there is one implementation to keep correct. */}
+      <AnimatePresence>
+        {sheet && (
+          <>
+            <motion.button
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSheet(null)}
+              aria-label="Close panel"
+              className="fixed inset-0 z-40 bg-ink/70 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+              className="fixed inset-y-0 right-0 z-50 flex w-[min(22rem,88vw)] flex-col border-l bg-ink"
+            >
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <span className="eyebrow">{sheet === 'modules' ? 'Modules' : 'Waiting on you'}</span>
+                <button
+                  onClick={() => setSheet(null)}
+                  className="rounded-lg p-1.5 text-ash hover:text-cream"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {sheet === 'modules' ? (
+                <ModuleList
+                  modules={railModules}
+                  active={activeModules}
+                  onPick={(name) => {
+                    setSheet(null);
+                    send(`Run ${name} and report back.`);
+                  }}
+                />
+              ) : (
+                <SideRail
+                  approvals={approvals}
+                  commitments={commitments}
+                  storage={storage}
+                  onResolveApproval={resolveApproval}
+                  onCommitmentState={setCommitmentState}
+                  onClearAll={clearAll}
+                />
+              )}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function ModuleList({
+  modules,
+  active,
+  onPick,
+}: {
+  modules: typeof MODULES;
+  active: string[];
+  onPick: (name: string) => void;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-6">
+      {modules.map((mod) => {
+        const lit = active.includes(mod.code);
+        return (
+          <button
+            key={mod.code}
+            onClick={() => onPick(mod.name)}
+            className={cn(
+              'group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors',
+              lit ? 'bg-gold/12' : 'hover:bg-cream/[0.04]',
+            )}
+          >
+            <mod.icon
+              className={cn(
+                'h-3.5 w-3.5 shrink-0 transition-colors',
+                lit ? 'text-gold' : 'text-ash/60 group-hover:text-ash',
+              )}
+            />
+            <span
+              className={cn(
+                'truncate text-xs transition-colors',
+                lit ? 'text-cream' : 'text-ash group-hover:text-cream',
+              )}
+            >
+              {mod.name}
+            </span>
+            <span className="ml-auto font-mono text-[0.6rem] text-ash/40">{mod.code}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

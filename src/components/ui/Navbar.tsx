@@ -10,6 +10,7 @@ import { Button } from './Button';
 const LINKS = [
   { href: '/#architecture', label: 'Architecture' },
   { href: '/#modules', label: 'Modules' },
+  { href: '/mood', label: 'Check in' },
   { href: '/#approval', label: 'Approval gate' },
   { href: '/#stack', label: 'Build' },
 ];
@@ -45,17 +46,17 @@ export function Navbar() {
             <span className="absolute inset-1.5 rounded-full bg-cocoa/70 blur-[6px] transition-all group-hover:bg-gold/70" />
             <span className="relative h-1.5 w-1.5 rounded-full bg-cream" />
           </span>
-          <span className="font-display text-[0.95rem] font-semibold tracking-[0.22em] text-cream">
+          <span className="font-display text-[0.95rem] font-bold tracking-[0.28em] text-cream transition-colors group-hover:text-gold-soft">
             ZYRON
           </span>
         </Link>
 
-        <div className="hidden items-center gap-8 md:flex">
+        <div className="hidden items-center gap-1 md:flex">
           {LINKS.map((link) => (
             <Link
               key={link.href}
               href={link.href}
-              className="relative text-sm text-ash/75 transition-colors hover:text-cream"
+              className="relative rounded-full border border-transparent px-4 py-1.5 text-sm text-ash transition-all duration-300 hover:border-gold/45 hover:bg-gold/[0.07] hover:text-gold-soft"
             >
               {link.label}
             </Link>
@@ -64,8 +65,11 @@ export function Navbar() {
 
         <div className="hidden md:block">
           <Link href="/console">
-            <Button variant="ghost" icon={<Terminal className="h-4 w-4" />}>
-              Open console
+            <Button
+              icon={<Terminal className="h-4 w-4" />}
+              className="px-7 text-[0.72rem] font-semibold uppercase tracking-[0.18em]"
+            >
+              Issue a Command
             </Button>
           </Link>
         </div>
@@ -101,8 +105,12 @@ export function Navbar() {
                 </Link>
               ))}
               <Link href="/console" onClick={() => setOpen(false)} className="mt-2">
-                <Button full icon={<Terminal className="h-4 w-4" />}>
-                  Open console
+                <Button
+                  full
+                  icon={<Terminal className="h-4 w-4" />}
+                  className="text-[0.72rem] font-semibold uppercase tracking-[0.18em]"
+                >
+                  Issue a Command
                 </Button>
               </Link>
             </div>

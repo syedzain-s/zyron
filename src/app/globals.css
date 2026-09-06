@@ -219,6 +219,40 @@
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Gold pointer.
+
+   Drawn as an inline SVG rather than shipped as a PNG: it scales on a retina
+   screen, it is one colour to change, and there is no extra file to load.
+
+   Desktop only, and only where a real pointer exists — replacing the cursor on
+   a touch device does nothing but confuse the accessibility tree.
+--------------------------------------------------------------------------- */
+
+@media (min-width: 1024px) and (pointer: fine) {
+  html,
+  body,
+  *:not(input):not(textarea):not([contenteditable='true']) {
+    cursor: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='28'%20height='28'%20viewBox='0%200%2028%2028'%3E%3Ccircle%20cx='14'%20cy='14'%20r='9'%20fill='none'%20stroke='%23C8A44D'%20stroke-width='1'%20opacity='0.45'/%3E%3Ccircle%20cx='14'%20cy='14'%20r='2.5'%20fill='%23C8A44D'/%3E%3C/svg%3E") 14 14, auto;
+  }
+
+  a,
+  button,
+  [role='button'],
+  summary,
+  label,
+  [data-cursor='hover'] {
+    cursor: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='28'%20height='28'%20viewBox='0%200%2028%2028'%3E%3Ccircle%20cx='14'%20cy='14'%20r='12'%20fill='none'%20stroke='%23C8A44D'%20stroke-width='1'%20opacity='0.85'/%3E%3Ccircle%20cx='14'%20cy='14'%20r='3.5'%20fill='%23C8A44D'/%3E%3C/svg%3E") 14 14, pointer;
+  }
+
+  /* Text entry keeps the I-beam. Losing it costs more than the effect gains. */
+  input,
+  textarea,
+  [contenteditable='true'] {
+    cursor: text;
+  }
+}
+
 @keyframes sheen {
   0%,
   100% {

@@ -58,9 +58,13 @@ const config: Config = {
 
       fontSize: {
         // A serif at display size needs tighter leading than a sans would.
-        'display-xl': ['clamp(2.65rem, 7.2vw, 6.25rem)', { lineHeight: '0.94', letterSpacing: '-0.03em' }],
-        'display-lg': ['clamp(2.1rem, 4.6vw, 3.9rem)', { lineHeight: '1.02', letterSpacing: '-0.025em' }],
-        'display-md': ['clamp(1.7rem, 3.2vw, 2.6rem)', { lineHeight: '1.12', letterSpacing: '-0.02em' }],
+        // Sized for Libre Baskerville, not for the geometric sans that was here
+        // before. A serif carries more visual weight at the same measurement,
+        // so the viewport step is gentler and the ceiling is lower — otherwise
+        // a three-line headline runs off the side of a laptop screen.
+        'display-xl': ['clamp(2.4rem, 4.6vw, 4.5rem)', { lineHeight: '1.02', letterSpacing: '-0.02em' }],
+        'display-lg': ['clamp(1.9rem, 3.4vw, 3.1rem)', { lineHeight: '1.1', letterSpacing: '-0.018em' }],
+        'display-md': ['clamp(1.55rem, 2.6vw, 2.25rem)', { lineHeight: '1.18', letterSpacing: '-0.015em' }],
       },
 
       maxWidth: {

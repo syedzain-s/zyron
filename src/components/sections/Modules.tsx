@@ -86,7 +86,7 @@ export function Modules() {
           </div>
         </Reveal>
 
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+        <div className="grid gap-10 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:gap-8">
           {/* Register list */}
           <div
             ref={gridRef}
@@ -173,7 +173,7 @@ export function Modules() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.3 }}
-                className="panel -mt-10 p-6"
+                className="panel -mt-8 p-5 sm:-mt-10 sm:p-6"
               >
                 <div className="flex items-center justify-between gap-3">
                   <span

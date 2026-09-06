@@ -36,7 +36,12 @@ export function CallToAction() {
         <Reveal delay={0.2}>
           <div className="mt-10 flex justify-center">
             <Link href="/console">
-              <Button icon={<Terminal className="h-4 w-4" />}>Open the console</Button>
+              <Button
+                icon={<Terminal className="h-4 w-4" />}
+                className="px-8 py-4 text-[0.72rem] font-semibold uppercase tracking-[0.18em]"
+              >
+                Issue a Command
+              </Button>
             </Link>
           </div>
         </Reveal>
