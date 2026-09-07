@@ -155,15 +155,24 @@ export async function POST(req: Request) {
         ? 'Read this photo and reply with the JSON described in your instructions.'
         : 'Listen to this short recording. Judge only tone, pace and energy of the voice — ignore the words if they are unclear. Reply with the JSON described in your instructions.';
 
-    const raw =
-      source === 'camera'
-        ? await readImage({ base64: data, mimeType, prompt, system: VISION_SYSTEM })
-        : await readAudio({ base64: data, mimeType, prompt, system: VISION_SYSTEM });
+    const request = {
+      base64: data,
+      mimeType,
+      prompt,
+      system: VISION_SYSTEM,
+      // The reply is parsed, not read, so ask the provider to guarantee JSON
+      // rather than relying on the prompt to suppress markdown fences.
+      json: true,
+    };
+
+    const raw = source === 'camera' ? await readImage(request) : await readAudio(request);
 
     const reading = parseVisionReading(raw);
 
     if (!reading) {
-      console.error('[zyron] unparseable mood reading', raw.slice(0, 300));
+      // Log the whole reply, not a slice: a truncated log of a truncated
+      // answer is how this stayed unexplained the first time.
+      console.error('[zyron] unparseable mood reading >>>', raw, '<<<');
       return NextResponse.json(
         { error: 'The reading came back garbled. Pick your mood instead and carry on.' },
         { status: 502 },

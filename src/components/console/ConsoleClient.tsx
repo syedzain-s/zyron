@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import Link from 'next/link';
 import { ArrowUp, Camera, Inbox, LayoutGrid, Loader2, PanelLeft, PanelLeftClose, Paperclip, Upload, X } from 'lucide-react';
 import { SceneCanvas } from '@/components/three/SceneCanvas';
-import { ZyronCore } from '@/components/three/ZyronCore';
+import { AgentAvatar, type AvatarState } from '@/components/three/AgentAvatar';
 import { ParticleField } from '@/components/three/ParticleField';
 import { StageLights } from '@/components/three/StageLights';
 import { ApprovalCard } from '@/components/ui/ApprovalCard';
@@ -55,6 +55,7 @@ export function ConsoleClient() {
   const [railOpen, setRailOpen] = useState(true);
   /** Which panel is showing as a sheet on narrow screens. */
   const [sheet, setSheet] = useState<'modules' | 'queue' | null>(null);
+  const [speaking, setSpeaking] = useState(false);
   const [activeModules, setActiveModules] = useState<string[]>([]);
 
   const [dragging, setDragging] = useState(false);
@@ -66,7 +67,15 @@ export function ConsoleClient() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const pendingCount = approvals.filter((a) => a.status === 'pending').length;
-  const intensity = busy || uploading ? 1 : pendingCount > 0 ? 0.6 : 0.28;
+
+  const avatarState: AvatarState = busy || uploading ? 'thinking' : speaking ? 'speaking' : 'idle';
+
+  // Hold the speaking pose long enough to read as an answer being delivered.
+  useEffect(() => {
+    if (!speaking) return;
+    const id = window.setTimeout(() => setSpeaking(false), 4200);
+    return () => window.clearTimeout(id);
+  }, [speaking]);
 
   /* Hydrate from storage on mount — this is what makes the console stateful. */
   useEffect(() => {
@@ -190,6 +199,7 @@ export function ConsoleClient() {
             createdAt: Date.now(),
           },
         ]);
+        setSpeaking(true);
       } catch (error) {
         pushSystem(
           error instanceof Error
@@ -240,6 +250,7 @@ export function ConsoleClient() {
           },
         ]);
         if (data.storage) setStorage(data.storage);
+        setSpeaking(true);
       } catch (error) {
         pushSystem(error instanceof Error ? error.message : 'That upload failed. Try again.');
       } finally {
@@ -353,11 +364,13 @@ export function ConsoleClient() {
       onDrop={onDrop}
       className="relative flex h-[100svh] flex-col overflow-hidden bg-ink pt-[4.5rem]"
     >
-      <div className="pointer-events-none absolute inset-0 opacity-45">
-        <SceneCanvas label="console" lazy={false} camera={{ position: [0, 0, 8.4] }}>
-          <StageLights env={false} />
-          <ParticleField count={480} radius={15} parallax={0.22} />
-          <ZyronCore intensity={intensity} scale={0.95} position={[3.4, 0.4, -2.4]} />
+      <div className="pointer-events-none absolute inset-0">
+        <SceneCanvas label="console" lazy={false} camera={{ position: [0, 0.4, 7] }}>
+          {/* Metal needs an environment to reflect, so unlike the old orb this
+              scene cannot run with the lighting rig switched off. */}
+          <StageLights />
+          <ParticleField count={360} radius={15} parallax={0.18} />
+          <AgentAvatar state={avatarState} scale={1.15} position={[3.5, -1.7, -1.2]} />
         </SceneCanvas>
       </div>
 

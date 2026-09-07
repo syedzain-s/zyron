@@ -5,6 +5,9 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft, Camera, Check, Loader2, Mic, Pause, Play, RotateCcw, ShieldCheck, Square, X,
 } from 'lucide-react';
+import { SceneCanvas } from '@/components/three/SceneCanvas';
+import { AgentAvatar, type AvatarState } from '@/components/three/AgentAvatar';
+import { StageLights } from '@/components/three/StageLights';
 import { MOODS, type Mood, type Soundscape, type Technique } from '@/lib/agent/mood';
 import { cn } from '@/lib/utils';
 
@@ -96,9 +99,26 @@ export function MoodCheckIn() {
     setError(null);
   };
 
+  const avatarState: AvatarState =
+    busy ? 'thinking' : stage === 'suggest' ? 'activity' : stage === 'confirm' ? 'speaking' : 'idle';
+
   return (
-    <div className="shell py-14">
-      <header className="mb-12">
+    <div className="shell relative py-14">
+      {/* Fixed to the viewport rather than parked at the top of the page, so it
+          stays with you through the whole flow instead of scrolling away the
+          moment the activities appear.
+
+          The camera sits well back and the model is scaled down: at the
+          previous distance a standing figure filled the frame and the head was
+          cropped by the header. */}
+      <div className="pointer-events-none fixed bottom-0 right-0 z-0 hidden h-[68vh] w-[34vw] max-w-[520px] lg:block">
+        <SceneCanvas label="mood-avatar" camera={{ position: [0, 1.1, 12], fov: 38 }}>
+          <StageLights />
+          <AgentAvatar state={avatarState} scale={0.78} position={[0, -3.1, 0]} followPointer={false} />
+        </SceneCanvas>
+      </div>
+
+      <header className="relative z-10 mb-12 max-w-3xl">
         <span className="eyebrow">BIO · Energy &amp; Stress</span>
         <h1 className="mt-6 font-display text-display-lg text-cream">How are you, actually?</h1>
         <p className="mt-5 max-w-[46ch] text-[1.0625rem] leading-[1.7] text-ash">
@@ -110,7 +130,7 @@ export function MoodCheckIn() {
       </header>
 
       {error && (
-        <div className="mb-8 rounded-xl border border-signal-risk/30 bg-signal-risk/[0.08] px-4 py-3 text-sm text-signal-risk">
+        <div className="relative z-10 mb-8 rounded-xl border border-signal-risk/30 bg-signal-risk/[0.08] px-4 py-3 text-sm text-signal-risk">
           {error}
         </div>
       )}
@@ -179,7 +199,7 @@ function CaptureStep({
   const [mode, setMode] = useState<'none' | 'camera' | 'voice'>('none');
 
   return (
-    <div className="grid gap-5 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">
+    <div className="relative z-10 grid gap-5 sm:gap-6 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3">
       <div className="panel p-6">
         <Camera className="h-5 w-5 text-gold" />
         <h2 className="mt-4 font-display text-xl text-cream">Show me</h2>
@@ -500,7 +520,7 @@ function ConfirmStep({
   const [correcting, setCorrecting] = useState(false);
 
   return (
-    <div className="panel mx-auto max-w-2xl p-5 sm:p-7">
+    <div className="panel relative z-10 mx-auto max-w-2xl p-5 sm:p-7">
       {/* A wrong read should cost one tap to redo, not a page reload. */}
       <div className="flex items-center justify-between gap-4">
         <span className="eyebrow">My guess</span>
@@ -599,7 +619,7 @@ function SuggestStep({
   };
 
   return (
-    <div className="space-y-8">
+    <div className="relative z-10 space-y-8 lg:max-w-3xl">
       <div className="flex flex-wrap items-baseline justify-between gap-4">
         <div>
           <span className="eyebrow">Try one of these</span>
@@ -987,7 +1007,7 @@ function SupportStep({
   onRestart: () => void;
 }) {
   return (
-    <div className="panel panel-gold mx-auto max-w-2xl p-6 sm:p-8">
+    <div className="panel panel-gold relative z-10 mx-auto max-w-2xl p-6 sm:p-8">
       <ShieldCheck className="h-6 w-6 text-gold" />
       <h2 className="mt-5 font-display text-2xl text-cream">{support.title}</h2>
       <p className="mt-4 text-[1.0625rem] leading-[1.75] text-cream/90">{support.body}</p>
@@ -1007,7 +1027,7 @@ function HistoryPanel({ history }: { history: History }) {
   const checkIns = history.trend.reduce((n, p) => n + p.count, 0);
 
   return (
-    <div className="mt-16 grid gap-10 border-t border-[var(--line)] pt-14 sm:mt-20 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+    <div className="relative z-10 mt-16 grid gap-10 border-t border-[var(--line)] pt-14 sm:mt-20 lg:max-w-3xl lg:grid-cols-1 xl:max-w-none xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
       {true && (
         <div>
           <div className="flex items-baseline justify-between gap-4">

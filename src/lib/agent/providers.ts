@@ -42,6 +42,8 @@ export interface MediaRequest {
   prompt: string;
   system?: string;
   maxTokens?: number;
+  /** Ask the provider to guarantee valid JSON rather than hoping for it. */
+  json?: boolean;
 }
 
 /** Kept as an alias so existing image callers read naturally. */
@@ -204,7 +206,14 @@ async function geminiText({ system, messages, maxTokens = 900, temperature = 0.4
   return geminiCall(body);
 }
 
-async function geminiMedia({ base64, mimeType, prompt, system, maxTokens = 700 }: MediaRequest) {
+async function geminiMedia({
+  base64,
+  mimeType,
+  prompt,
+  system,
+  maxTokens = 1600,
+  json,
+}: MediaRequest) {
   const body = {
     ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     contents: [
@@ -216,9 +225,20 @@ async function geminiMedia({ base64, mimeType, prompt, system, maxTokens = 700 }
         ],
       },
     ],
-    // Low temperature: this is a reading, not a creative task, and the same
-    // input should not produce a different mood on every attempt.
-    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.2 },
+    generationConfig: {
+      maxOutputTokens: maxTokens,
+      // Low temperature: this is a reading, not a creative task, and the same
+      // input should not produce a different mood on every attempt.
+      temperature: 0.2,
+      // Newer Gemini models reason before answering, and that reasoning is
+      // charged against the same output budget. On a tight budget the whole
+      // allowance goes to thinking and the reply comes back truncated — which
+      // surfaces to the user as an unparseable answer rather than as a limit.
+      thinkingConfig: { thinkingBudget: 0 },
+      // Asking for JSON is more reliable than asking politely in the prompt:
+      // it removes markdown fences and preamble at the source.
+      ...(json ? { responseMimeType: 'application/json' } : {}),
+    },
   };
 
   return geminiCall(body);
@@ -235,6 +255,23 @@ async function geminiCall(body: unknown, allowRetry = true): Promise<string> {
       body: JSON.stringify(body),
     }),
   );
+
+  // Some models reject generationConfig fields the others accept. Strip the
+  // optional ones and try again rather than failing on a config detail.
+  if (res.status === 400 && allowRetry) {
+    const detail = await res.clone().text().catch(() => '');
+    if (/thinkingConfig|thinkingBudget|responseMimeType/i.test(detail)) {
+      console.warn('[zyron] gemini: retrying without optional generationConfig');
+      const plain = JSON.parse(JSON.stringify(body)) as {
+        generationConfig?: Record<string, unknown>;
+      };
+      if (plain.generationConfig) {
+        delete plain.generationConfig.thinkingConfig;
+        delete plain.generationConfig.responseMimeType;
+      }
+      return geminiCall(plain, false);
+    }
+  }
 
   // A 404 means the model name is gone, not that the request was wrong. Find a
   // live one and try again — once, so a genuine outage cannot loop.
@@ -265,7 +302,16 @@ async function geminiCall(body: unknown, allowRetry = true): Promise<string> {
     .join('')
     .trim();
 
-  if (!text) throw new ModelError('gemini', 'The model returned an empty answer. Try again.');
+  if (!text) {
+    const reason = data.candidates?.[0]?.finishReason;
+    console.error('[zyron] gemini returned no text. finishReason:', reason);
+    throw new ModelError(
+      'gemini',
+      reason === 'MAX_TOKENS'
+        ? 'The model ran out of room before answering. Try again.'
+        : 'The model returned an empty answer. Try again.',
+    );
+  }
   return text;
 }
 
