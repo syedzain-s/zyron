@@ -61,7 +61,6 @@ export function AgentAvatar({
   const inner = useRef<THREE.Group>(null);
 
   const { scene, animations } = useGLTF(MODEL_URL, DRACO_PATH);
-  const { actions, mixer } = useAnimations(animations, group);
 
   /**
    * Two corrections are applied at load, both traceable to the source file.
@@ -131,6 +130,58 @@ export function AgentAvatar({
 
     return clone;
   }, [scene]);
+
+  /**
+   * Strip the clip's root motion.
+   *
+   * The baked animation moves six bones by roughly 400 units while the model
+   * itself is only 575 tall — the character walks and flies right out of
+   * frame. Every other translated bone moves under 4 units, so the two groups
+   * are separated by a hundredfold gap, not a judgement call.
+   *
+   * Rather than hard-code a threshold that only suits this file, the spans are
+   * sorted and cut at the largest ratio jump. A clip with no root motion has no
+   * such jump and comes through untouched.
+   */
+  const inPlace = useMemo(() => {
+    return animations.map((clip) => {
+      const positional = clip.tracks.filter((t) => t.name.endsWith('.position'));
+      if (positional.length < 2) return clip;
+
+      const spanOf = (track: THREE.KeyframeTrack) => {
+        const v = track.values;
+        let min = Infinity;
+        let max = -Infinity;
+        for (let i = 0; i < v.length; i += 1) {
+          if (v[i] < min) min = v[i];
+          if (v[i] > max) max = v[i];
+        }
+        return max - min;
+      };
+
+      const spans = positional.map(spanOf).sort((a, b) => a - b);
+
+      let cut = Infinity;
+      let biggest = 1;
+      for (let i = 1; i < spans.length; i += 1) {
+        const prev = Math.max(spans[i - 1], 0.001);
+        const ratio = spans[i] / prev;
+        if (ratio > biggest && ratio > 10) {
+          biggest = ratio;
+          cut = spans[i];
+        }
+      }
+      if (cut === Infinity) return clip;
+
+      const trimmed = clip.clone();
+      trimmed.tracks = clip.tracks.filter(
+        (t) => !t.name.endsWith('.position') || spanOf(t) < cut,
+      );
+      return trimmed;
+    });
+  }, [animations]);
+
+  const { actions, mixer } = useAnimations(inPlace, group);
 
   // Cross-fade rather than cut, so a state change reads as the same character
   // changing pace instead of a different animation starting.
