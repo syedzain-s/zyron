@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { routeIntent } from '@/lib/agent/router';
-import { simulate, think } from '@/lib/agent/brain';
+import { resolveRecipient, simulate, think } from '@/lib/agent/brain';
+import { clearPending, getPending, looksLikeAnswer, setPending } from '@/lib/agent/pending';
 import { extractCommitments } from '@/lib/agent/commitments';
 import { DEFAULT_USER, getStore, type ApprovalRecord, type CommitmentRecord } from '@/lib/db/store';
 
@@ -16,7 +17,7 @@ export const maxDuration = 45;
  * spinner. A console that hangs is worse than one that says it failed: the
  * user has no idea whether their command ran.
  */
-const MODEL_TIMEOUT_MS = 20_000;
+const MODEL_TIMEOUT_MS = 25_000;
 const STORAGE_TIMEOUT_MS = 5_000;
 
 interface AgentRequestBody {
@@ -45,7 +46,71 @@ export async function POST(req: Request) {
   }
 
   const store = getStore();
-  const route = routeIntent(message);
+
+  /**
+   * If ZYRON asked a question last turn, this message is probably the answer.
+   *
+   * Routing it as a fresh command is what produced the bug where answering
+   * "irtizamazhar" came back as a greeting: the word matches no module, so it
+   * fell through to small talk while the original request was lost.
+   *
+   * The original command is replayed with the answer substituted, so the
+   * approval card carries the real intent and not just an address.
+   */
+  const pending = await getPending().catch(() => null);
+
+  let effectiveMessage = message;
+  let answeredPending = false;
+
+  if (pending?.kind === 'recipient' && looksLikeAnswer(message)) {
+    const answer = message.trim();
+    const resolved = await resolveRecipient(
+      answer.includes('@') ? answer : `send a message to ${answer}`,
+    );
+
+    if (resolved.kind === 'found') {
+      // Replay the original instruction, now addressed properly.
+      effectiveMessage = pending.originalMessage.replace(
+        new RegExp(pending.subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+        answer.includes('@') ? answer : answer,
+      );
+      if (!effectiveMessage.includes(answer)) {
+        effectiveMessage = `${pending.originalMessage} (send it to ${answer})`;
+      }
+      answeredPending = true;
+      await clearPending().catch(() => undefined);
+    } else if (resolved.kind === 'ask') {
+      await setPending({
+        kind: 'recipient',
+        subject: answer,
+        originalMessage: pending.originalMessage,
+      }).catch(() => undefined);
+
+      await safe(() =>
+        store.appendMessage({
+          userId: DEFAULT_USER,
+          speaker: 'user',
+          body: message,
+          createdAt: Date.now(),
+        }),
+      );
+
+      return NextResponse.json({
+        body: resolved.question,
+        routedTo: ['CMS'],
+        mode: 'simulation',
+        grounded: false,
+        storage: store.kind,
+        approval: null,
+        commitments: [],
+      });
+    }
+  } else if (pending && !looksLikeAnswer(message)) {
+    // The user moved on. A stale question must not swallow a later message.
+    await clearPending().catch(() => undefined);
+  }
+
+  const route = routeIntent(effectiveMessage);
 
   await safe(() =>
     store.appendMessage({
@@ -59,18 +124,18 @@ export async function POST(req: Request) {
   // A slow model must not hold the request open indefinitely; think() already
   // degrades to the rule-based writer, so a timeout here is a second net.
   const reply = await withTimeout(
-    think(message, route, body.history ?? []),
+    think(effectiveMessage, route, body.history ?? []),
     MODEL_TIMEOUT_MS + 5_000,
     'think',
   ).catch((error) => {
     console.error('[zyron] think timed out', error);
-    return simulate(message, route);
+    return simulate(effectiveMessage, route);
   });
 
   // Commitments are extracted from what the user said, not from what the model
   // decided to mention — the tracker has to be independent of the prose.
   let commitments: CommitmentRecord[] = [];
-  const extracted = extractCommitments(message);
+  const extracted = extractCommitments(answeredPending ? effectiveMessage : message);
   if (extracted.length > 0) {
     commitments =
       (await safe(() =>
@@ -133,6 +198,9 @@ export async function POST(req: Request) {
     body: reply.body,
     routedTo: reply.routedTo,
     mode: reply.mode,
+    // Lets the console distinguish "written from your inbox" from "worked
+    // example". Without it the two look identical and the user cannot tell.
+    grounded: Boolean(reply.grounded),
     storage: store.kind,
     approval,
     commitments,

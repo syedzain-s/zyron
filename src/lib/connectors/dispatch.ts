@@ -7,20 +7,22 @@
  *
  * Two channels, tried in order:
  *
- *   1. n8n webhook — the real integration layer. n8n holds the Google OAuth
- *      credentials, handles token refresh, retries and rate limits, and fans
- *      the action out to Gmail, Calendar, Sheets or anything else. Adding a
- *      connector becomes a change in n8n, not a change in this codebase.
+ *   1. Gmail — the real one. Sends as the connected Google account through the
+ *      same OAuth credentials the briefing modules already read with, using the
+ *      narrow `gmail.send` scope. No extra service has to be running, which
+ *      means it works identically on localhost and on the deployment.
  *
- *   2. Telegram Bot API — a direct fallback with no OAuth at all. Useful when
- *      n8n is not running, and honest enough to demo: an approved message
+ *   2. Telegram Bot API — a fallback with no OAuth at all. Useful when Google
+ *      is not connected, and honest enough to demo: an approved message
  *      genuinely lands on a real phone.
  *
- * With neither configured the dispatcher reports `simulated` and says so. It
+ * With neither available the dispatcher reports `simulated` and says so. It
  * never claims something was sent when it was not.
  */
 
-export type Channel = 'n8n' | 'telegram' | 'simulated';
+import { isConnected, googleConfigured, sendGmail, GoogleError } from '@/lib/connectors/google';
+
+export type Channel = 'gmail' | 'telegram' | 'simulated';
 
 export interface DispatchPayload {
   approvalId: string;
@@ -38,27 +40,43 @@ export interface DispatchResult {
   channel: Channel;
   /** Shown to the user, so it says what actually happened. */
   detail: string;
+  /** Gmail's message id when there is one, for the audit trail. */
+  reference?: string;
 }
 
 const TIMEOUT_MS = 12_000;
 
+/**
+ * What the system *could* use, judged from configuration alone.
+ *
+ * Synchronous because the health endpoint reports it on every request. It
+ * cannot tell whether Google is actually connected — `resolveChannel()` does
+ * that, and dispatch uses the latter.
+ */
 export function configuredChannel(): Channel {
-  if (process.env.N8N_WEBHOOK_URL) return 'n8n';
+  if (googleConfigured()) return 'gmail';
+  if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) return 'telegram';
+  return 'simulated';
+}
+
+/** What the system will actually use right now. */
+export async function resolveChannel(): Promise<Channel> {
+  if (googleConfigured() && (await isConnected())) return 'gmail';
   if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) return 'telegram';
   return 'simulated';
 }
 
 export async function dispatchApproval(payload: DispatchPayload): Promise<DispatchResult> {
-  const channel = configuredChannel();
+  const channel = await resolveChannel();
 
-  if (channel === 'n8n') {
-    const result = await sendToN8n(payload);
-    // A dead workflow should not silently swallow an approved action, so fall
+  if (channel === 'gmail') {
+    const result = await sendViaGmail(payload);
+    // A failed send should not silently swallow an approved action, so fall
     // through to Telegram if it is available.
-    if (!result.delivered && process.env.TELEGRAM_BOT_TOKEN) {
+    if (!result.delivered && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
       const fallback = await sendToTelegram(payload);
       if (fallback.delivered) {
-        return { ...fallback, detail: `${fallback.detail} (n8n was unreachable)` };
+        return { ...fallback, detail: `${fallback.detail} (Gmail failed: ${result.detail})` };
       }
     }
     return result;
@@ -69,54 +87,54 @@ export async function dispatchApproval(payload: DispatchPayload): Promise<Dispat
   return {
     delivered: false,
     channel: 'simulated',
-    detail: 'Recorded as approved. No delivery channel is configured, so nothing left the system.',
+    detail: googleConfigured()
+      ? 'Recorded as approved. Google is not connected, so nothing left the system.'
+      : 'Recorded as approved. No delivery channel is configured, so nothing left the system.',
   };
 }
 
-/* ─────────────────────────────── n8n ─────────────────────────────── */
+/* ─────────────────────────────── Gmail ─────────────────────────────── */
 
-async function sendToN8n(payload: DispatchPayload): Promise<DispatchResult> {
-  const url = process.env.N8N_WEBHOOK_URL!;
-  const secret = process.env.N8N_WEBHOOK_SECRET;
-
+async function sendViaGmail(payload: DispatchPayload): Promise<DispatchResult> {
   try {
-    const res = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // n8n's Header Auth credential checks this. Without it, anyone who
-        // learns the webhook URL can make the workflow send mail as you.
-        ...(secret ? { 'x-zyron-secret': secret } : {}),
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.error('[zyron] n8n rejected the dispatch', res.status, text.slice(0, 300));
-      return {
-        delivered: false,
-        channel: 'n8n',
-        detail: `The workflow answered ${res.status}. Nothing was sent — check the n8n execution log.`,
-      };
-    }
-
-    // n8n may answer with anything; a JSON body is a convenience, not a contract.
-    const data = (await res.json().catch(() => null)) as { message?: string } | null;
+    const { subject, body } = splitSubject(payload);
+    const sent = await sendGmail({ to: payload.target, subject, body });
 
     return {
       delivered: true,
-      channel: 'n8n',
-      detail: data?.message ?? 'Dispatched through n8n.',
+      channel: 'gmail',
+      detail: `Sent via Gmail to ${sent.to}.`,
+      reference: sent.id || undefined,
     };
   } catch (error) {
-    console.error('[zyron] n8n dispatch failed', error);
-    return {
-      delivered: false,
-      channel: 'n8n',
-      detail: 'The n8n workflow did not respond. Nothing was sent.',
-    };
+    // GoogleError already carries a sentence written for the user.
+    const detail =
+      error instanceof GoogleError
+        ? error.userMessage
+        : 'Gmail did not respond. Nothing was sent.';
+    console.error('[zyron] gmail dispatch failed', error);
+    return { delivered: false, channel: 'gmail', detail };
   }
+}
+
+/**
+ * The model writes a message, not a message plus metadata, so a subject has to
+ * come from somewhere. If the draft opens with its own `Subject:` line that is
+ * used and stripped; otherwise the module and action make a serviceable one.
+ */
+function splitSubject(payload: DispatchPayload): { subject: string; body: string } {
+  const match = payload.body.match(/^\s*subject:\s*(.+?)\r?\n+([\s\S]*)$/i);
+  if (match && match[1].trim()) {
+    return { subject: match[1].trim(), body: match[2].trim() };
+  }
+
+  const action = payload.action.trim();
+  const subject = action && action.length <= 90 ? capitalise(action) : payload.moduleName;
+  return { subject, body: payload.body.trim() };
+}
+
+function capitalise(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 /* ───────────────────────────── Telegram ───────────────────────────── */

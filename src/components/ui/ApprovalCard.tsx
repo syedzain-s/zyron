@@ -80,9 +80,12 @@ export function ApprovalCard({ request, onResolve, compact }: ApprovalCardProps)
 
       {settled ? (
         <p className="mt-4 font-mono text-xs text-ash/70">
-          {request.status === 'approved' && 'Dispatched.'}
-          {request.status === 'edited' && 'Edited and dispatched.'}
-          {request.status === 'cancelled' && 'Cancelled. Nothing was sent.'}
+          {request.deliveryDetail ??
+            (request.status === 'approved'
+              ? 'Approved.'
+              : request.status === 'edited'
+                ? 'Edited and approved.'
+                : 'Cancelled. Nothing was sent.')}
         </p>
       ) : (
         <div className="mt-5 flex flex-wrap gap-2">

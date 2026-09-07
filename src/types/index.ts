@@ -31,6 +31,7 @@ export interface ApprovalRequest {
   createdAt: number;
   status: ApprovalStatus;
   resolvedAt?: number;
+  deliveryDetail?: string;
 }
 
 export type Speaker = 'user' | 'zyron' | 'system';

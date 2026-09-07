@@ -312,6 +312,23 @@ export function ConsoleClient() {
           body: JSON.stringify({ status, payload }),
         });
         if (!res.ok) throw new Error('save failed');
+
+        const result = await res.json();
+        const deliveryDetail = typeof result?.detail === 'string' ? result.detail : undefined;
+        setApprovals((prev) => prev.map((a) => (a.id === id ? { ...a, deliveryDetail } : a)));
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.approval?.id === id
+              ? { ...m, approval: { ...m.approval, deliveryDetail } }
+              : m,
+          ),
+        );
+        // Say what actually happened to the action. "Approved" and "delivered"
+        // are different facts, and the user is entitled to know which one this
+        // was — especially when no channel is configured.
+        if (status !== 'cancelled' && result?.detail) {
+          pushSystem(result.detail);
+        }
       } catch {
         setApprovals(previous);
         pushSystem('That decision could not be saved, so nothing was dispatched. Try it again.');
