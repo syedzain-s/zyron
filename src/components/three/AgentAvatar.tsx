@@ -30,6 +30,12 @@ export type AvatarState = 'idle' | 'thinking' | 'speaking' | 'activity';
 const MODEL_URL = '/models/agent.glb';
 const DRACO_PATH = '/draco/';
 
+/**
+ * World-units tall, measured and applied at load. Swapping the model file no
+ * longer means re-tuning `scale` at every call site.
+ */
+const TARGET_HEIGHT = 2.6;
+
 interface AgentAvatarProps {
   state?: AvatarState;
   scale?: number;
@@ -57,11 +63,42 @@ export function AgentAvatar({
   const { scene, animations } = useGLTF(MODEL_URL, DRACO_PATH);
   const { actions, mixer } = useAnimations(animations, group);
 
-  // The scene graph is shared between every mount of the same URL, so it has
-  // to be cloned before materials are touched — otherwise two avatars on one
-  // page fight over the same material instances.
+  /**
+   * Two corrections are applied at load, both traceable to the source file.
+   *
+   * The model came out of FBX, which is Z-up, and its transform chain leaves a
+   * -90° rotation about X on the armature that nothing cancels. Left alone the
+   * figure lies on its back with the legs above the body.
+   *
+   * Then, rather than hand-tuning scale and Y offset until it looks right, the
+   * bounds are measured after the rotation and the model is normalised to a
+   * fixed height with its feet on the origin. Guessed numbers only hold for
+   * one model; this holds for any of them.
+   */
   const model = useMemo(() => {
     const clone = scene.clone(true);
+
+    // Undo the leftover Z-up correction.
+    clone.rotation.x = Math.PI / 2;
+    clone.updateMatrixWorld(true);
+
+    const box = new THREE.Box3().setFromObject(clone);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+
+    if (size.y > 0.0001) {
+      const fit = TARGET_HEIGHT / size.y;
+      clone.scale.multiplyScalar(fit);
+      clone.updateMatrixWorld(true);
+
+      // Re-measure after scaling, then drop the feet onto y = 0.
+      const scaled = new THREE.Box3().setFromObject(clone);
+      const centre = new THREE.Vector3();
+      scaled.getCenter(centre);
+      clone.position.x -= centre.x;
+      clone.position.z -= centre.z;
+      clone.position.y -= scaled.min.y;
+    }
 
     const body = new THREE.MeshPhysicalMaterial({
       color: '#C8A44D',

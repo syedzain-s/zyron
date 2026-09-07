@@ -114,7 +114,7 @@ export function MoodCheckIn() {
       <div className="pointer-events-none fixed bottom-0 right-0 z-0 hidden h-[68vh] w-[34vw] max-w-[520px] lg:block">
         <SceneCanvas label="mood-avatar" camera={{ position: [0, 1.1, 12], fov: 38 }}>
           <StageLights />
-          <AgentAvatar state={avatarState} scale={0.78} position={[0, -3.1, 0]} followPointer={false} />
+          <AgentAvatar state={avatarState} position={[0, -1.4, 0]} followPointer={false} />
         </SceneCanvas>
       </div>
 

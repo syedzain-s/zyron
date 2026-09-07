@@ -370,7 +370,7 @@ export function ConsoleClient() {
               scene cannot run with the lighting rig switched off. */}
           <StageLights />
           <ParticleField count={360} radius={15} parallax={0.18} />
-          <AgentAvatar state={avatarState} scale={1.15} position={[3.5, -1.7, -1.2]} />
+          <AgentAvatar state={avatarState} position={[3.4, -1.5, -1.2]} />
         </SceneCanvas>
       </div>
 
