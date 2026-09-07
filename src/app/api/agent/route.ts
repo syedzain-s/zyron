@@ -1,12 +1,23 @@
 import { NextResponse } from 'next/server';
 import { routeIntent } from '@/lib/agent/router';
-import { buildSystemPrompt, simulate, type BrainReply } from '@/lib/agent/brain';
+import { simulate, think } from '@/lib/agent/brain';
 import { extractCommitments } from '@/lib/agent/commitments';
 import { DEFAULT_USER, getStore, type ApprovalRecord, type CommitmentRecord } from '@/lib/db/store';
-import { MODULES } from '@/lib/modules';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 45;
+
+/**
+ * Every outbound call here has a deadline.
+ *
+ * Without one, an unreachable model endpoint or a database whose IP is not
+ * whitelisted leaves the request hanging for minutes while the console shows a
+ * spinner. A console that hangs is worse than one that says it failed: the
+ * user has no idea whether their command ran.
+ */
+const MODEL_TIMEOUT_MS = 20_000;
+const STORAGE_TIMEOUT_MS = 5_000;
 
 interface AgentRequestBody {
   message?: string;
@@ -45,7 +56,16 @@ export async function POST(req: Request) {
     }),
   );
 
-  const reply = await think(message, route, body.history ?? []);
+  // A slow model must not hold the request open indefinitely; think() already
+  // degrades to the rule-based writer, so a timeout here is a second net.
+  const reply = await withTimeout(
+    think(message, route, body.history ?? []),
+    MODEL_TIMEOUT_MS + 5_000,
+    'think',
+  ).catch((error) => {
+    console.error('[zyron] think timed out', error);
+    return simulate(message, route);
+  });
 
   // Commitments are extracted from what the user said, not from what the model
   // decided to mention — the tracker has to be independent of the prose.
@@ -119,57 +139,20 @@ export async function POST(req: Request) {
   });
 }
 
-async function think(
-  message: string,
-  route: ReturnType<typeof routeIntent>,
-  history: Array<{ role: 'user' | 'assistant'; content: string }>,
-): Promise<BrainReply> {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) return simulate(message, route);
-
+/** Storage problems must not take the conversation down, or slow it to a stop. */
+async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
   try {
-    const { default: Anthropic } = await import('@anthropic-ai/sdk');
-    const client = new Anthropic({ apiKey: key });
-
-    const completion = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 900,
-      system: buildSystemPrompt(route),
-      messages: [...history.slice(-8), { role: 'user' as const, content: message }],
-    });
-
-    const text = completion.content
-      .map((block) => (block.type === 'text' ? block.text : ''))
-      .filter(Boolean)
-      .join('\n')
-      .trim();
-
-    const primary = MODULES.find((m) => m.code === route.modules[0])!;
-    const reply: BrainReply = {
-      body: text || 'No output produced.',
-      routedTo: route.modules,
-      mode: 'model',
-    };
-
-    if (route.risk !== 'autonomous') {
-      const staged = simulate(message, route).approval;
-      if (staged) reply.approval = { ...staged, moduleName: primary.name };
-    }
-
-    return reply;
+    return await withTimeout(fn(), STORAGE_TIMEOUT_MS, 'storage');
   } catch (error) {
-    console.error('[zyron] model call failed', error);
-    // Degrade to simulation rather than showing the user a dead console.
-    return simulate(message, route);
+    console.error('[zyron] storage write skipped', error);
+    return null;
   }
 }
 
-/** Storage problems must not take the conversation down. */
-async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
-  try {
-    return await fn();
-  } catch (error) {
-    console.error('[zyron] storage write failed', error);
-    return null;
-  }
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer)) as Promise<T>;
 }
