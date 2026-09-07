@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useAnimations, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { damp } from '@/lib/utils';
 
 /**
@@ -75,11 +76,29 @@ export function AgentAvatar({
    * one model; this holds for any of them.
    */
   const model = useMemo(() => {
-    const clone = scene.clone(true);
+    // SkeletonUtils.clone, not Object3D.clone.
+    //
+    // Object3D.clone copies the meshes and copies the bones, but leaves every
+    // cloned SkinnedMesh still bound to the *original* skeleton. The body then
+    // follows one set of bones and the feet follow another, and the model
+    // comes apart in mid-air. SkeletonUtils rebinds each skinned mesh to the
+    // cloned bones, which is the whole reason it exists.
+    const clone = cloneSkinned(scene);
 
     // Undo the leftover Z-up correction.
     clone.rotation.x = Math.PI / 2;
     clone.updateMatrixWorld(true);
+
+    // Skinned geometry does not update its bounding box as bones move, so ask
+    // three to compute one that accounts for the skin.
+    clone.traverse((child) => {
+      const mesh = child as THREE.SkinnedMesh;
+      if (mesh.isSkinnedMesh) {
+        mesh.frustumCulled = false;
+        mesh.geometry.computeBoundingBox();
+        mesh.geometry.computeBoundingSphere();
+      }
+    });
 
     const box = new THREE.Box3().setFromObject(clone);
     const size = new THREE.Vector3();
