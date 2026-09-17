@@ -10,17 +10,27 @@ import { getDb, mongoConfigured } from '@/lib/db/mongo';
  * immediately forgotten, which is the single most irritating thing a system
  * that asks questions can do.
  *
+ * Two kinds of question so far:
+ *
+ *   recipient — "what is X's email?"       the answer is an address or a name
+ *   body      — "what should I say to X?"  the answer is the message itself
+ *
+ * The second exists because the first was not enough: after the address came
+ * back the command "send email to israr" still had nothing to say, the model
+ * asked, and the user's reply ("tell zain how are you") was routed from
+ * scratch and came back as a greeting. Same bug, one step later.
+ *
  * Deliberately narrow: one open question at a time, and it expires. A stale
  * pending question is worse than none, because a later unrelated message gets
  * swallowed as an answer to something the user has long moved on from.
  */
 
-export type PendingKind = 'recipient';
+export type PendingKind = 'recipient' | 'body';
 
 export interface Pending {
   userId: string;
   kind: PendingKind;
-  /** The name we could not resolve. */
+  /** recipient: the name we could not resolve. body: the resolved recipient label. */
   subject: string;
   /** The command that triggered the question, replayed once answered. */
   originalMessage: string;
@@ -103,4 +113,37 @@ export function looksLikeAnswer(message: string): boolean {
   if (/[\w.+-]+@[\w-]+\.[\w.]+/.test(trimmed)) return true;
   // A bare handle or name — "irtizamazhar", "Irtiza Mazhar".
   return trimmed.split(/\s+/).length <= 3 && /^[\p{L}][\p{L}\d.'_-]{1,40}(\s+\S+){0,2}$/u.test(trimmed);
+}
+
+/**
+ * Did the user back out of the question instead of answering it?
+ *
+ * Checked before anything is treated as a body, because "never mind" typed
+ * into a message prompt should cancel the message, not become the message.
+ */
+export function looksLikeCancel(message: string): boolean {
+  const trimmed = message.trim().toLowerCase();
+  if (trimmed.split(/\s+/).length > 4) return false;
+  return /^(cancel|never\s*mind|nevermind|forget it|stop|drop it|leave it|no|nah|nope|nahi|rehne do|chor do|chhor do|jane do)\b/.test(
+    trimmed,
+  );
+}
+
+/**
+ * Is this message plausibly the body of the message ZYRON asked for?
+ *
+ * Almost anything is, which is the point: when ZYRON has just asked "what
+ * should I say?", the next thing typed is the answer unless it is clearly a
+ * cancel or clearly a different command (a briefing request, a contract
+ * question). Those two exceptions are the only ones — being too clever here
+ * is how "tell zain how are you" got treated as a greeting.
+ */
+export function looksLikeBody(message: string): boolean {
+  const trimmed = message.trim();
+  if (!trimmed) return false;
+  if (looksLikeCancel(trimmed)) return false;
+  // An obvious pivot to another module. Messaging verbs are deliberately not
+  // listed: "tell him I am late" is a body, not a new command.
+  if (/^(brief me|briefing|what'?s on my calendar|what am i forgetting|my day|agenda)\b/i.test(trimmed)) return false;
+  return true;
 }

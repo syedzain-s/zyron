@@ -250,9 +250,7 @@ function CaptureStep({
         )}
       </div>
 
-      {/* Always available. Not everyone wants a camera on, and a demo machine
-          may have neither camera nor microphone. */}
-      <div className="panel p-6">
+      <div className="panel p-6 md:col-span-2 xl:col-span-1">
         <Check className="h-5 w-5 text-gold" />
         <h2 className="mt-4 font-display text-xl text-cream">Just tell me</h2>
         <p className="mt-2 text-sm leading-relaxed text-ash">
@@ -275,16 +273,18 @@ function CaptureStep({
   );
 }
 
+/* ─────────────────────────── Camera ─────────────────────────── */
+
 function CameraCapture({
   busy,
   onCapture,
   onCancel,
 }: {
   busy: boolean;
-  onCapture: (base64: string, mimeType: string) => void;
+  onCapture: (dataUrl: string, mimeType: string) => void;
   onCancel: () => void;
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [ready, setReady] = useState(false);
   const [denied, setDenied] = useState<string | null>(null);
@@ -293,14 +293,21 @@ function CameraCapture({
     let cancelled = false;
 
     navigator.mediaDevices
-      ?.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 }, audio: false })
+      .getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } })
       .then((stream) => {
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
         streamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          // Without an explicit play() the preview stays black on some
+          // browsers even with autoPlay set, and a black preview means a black
+          // capture.
+          void video.play().catch(() => undefined);
+        }
         setReady(true);
       })
       .catch((err: DOMException) => {
@@ -319,13 +326,28 @@ function CameraCapture({
     };
   }, []);
 
-  const shoot = () => {
+  const shoot = async () => {
     const video = videoRef.current;
     if (!video) return;
 
+    // The stream can report "ready" before the first frame has decoded, and a
+    // canvas drawn at that moment is solid black — which the model rejects.
+    // Wait for real pixels, with a ceiling so a stuck stream cannot hang the
+    // button forever.
+    if (video.readyState < 2 || !video.videoWidth) {
+      await new Promise<void>((resolve) => {
+        video.addEventListener('loadeddata', () => resolve(), { once: true });
+        window.setTimeout(resolve, 1500);
+      });
+    }
+    if (!video.videoWidth || !video.videoHeight) {
+      setDenied('The camera has not produced a frame yet. Give it a second and try again.');
+      return;
+    }
+
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -367,7 +389,7 @@ function CameraCapture({
       </div>
       <div className="mt-3 flex gap-2">
         <button
-          onClick={shoot}
+          onClick={() => void shoot()}
           disabled={!ready || busy}
           className="flex-1 rounded-xl bg-gold py-2.5 text-sm font-medium text-ink disabled:opacity-40"
         >
@@ -380,6 +402,8 @@ function CameraCapture({
     </div>
   );
 }
+
+/* ─────────────────────────── Voice ─────────────────────────── */
 
 const RECORD_SECONDS = 10;
 
@@ -404,7 +428,7 @@ function VoiceCapture({
   }, []);
 
   const stop = useCallback(() => {
-    recorderRef.current?.state === 'recording' && recorderRef.current.stop();
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
   }, []);
 
   const start = async () => {
@@ -421,12 +445,20 @@ function VoiceCapture({
       recorderRef.current = recorder;
       chunks.current = [];
 
-      recorder.ondataavailable = (e) => e.data.size > 0 && chunks.current.push(e.data);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.current.push(e.data);
+      };
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunks.current, { type: recorder.mimeType || 'audio/webm' });
-        const base64 = await blobToBase64(blob);
-        onCapture(base64, (recorder.mimeType || 'audio/webm').split(';')[0]);
+        const raw = new Blob(chunks.current, { type: recorder.mimeType || 'audio/webm' });
+        try {
+          // The model takes wav/mp3/ogg/flac, not the webm Chrome records, so
+          // the clip is re-encoded in the browser before it goes anywhere.
+          const wav = await blobToWav(raw);
+          onCapture(await blobToBase64(wav), 'audio/wav');
+        } catch {
+          setDenied('That recording could not be processed. Try again, or pick your mood instead.');
+        }
       };
 
       recorder.start();
@@ -500,6 +532,52 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(new Error('Could not read the recording.'));
     reader.readAsDataURL(blob);
   });
+}
+
+/**
+ * Re-encodes any browser recording as 16-bit PCM WAV.
+ *
+ * Chrome records webm/opus, Safari records mp4/aac, and the model accepts
+ * neither reliably. WAV is the one format everything decodes. Mono is enough:
+ * the reading is about tone and pace, not stereo image.
+ */
+async function blobToWav(blob: Blob): Promise<Blob> {
+  const ctx = new AudioContext();
+  const audio = await ctx.decodeAudioData(await blob.arrayBuffer());
+  await ctx.close();
+
+  const channels = 1;
+  const rate = audio.sampleRate;
+  const frames = audio.length;
+  const bytes = frames * channels * 2;
+  const out = new ArrayBuffer(44 + bytes);
+  const view = new DataView(out);
+  const write = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i += 1) view.setUint8(offset + i, text.charCodeAt(i));
+  };
+
+  write(0, 'RIFF');
+  view.setUint32(4, 36 + bytes, true);
+  write(8, 'WAVE');
+  write(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * channels * 2, true);
+  view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true);
+  write(36, 'data');
+  view.setUint32(40, bytes, true);
+
+  const data = audio.getChannelData(0);
+  let offset = 44;
+  for (let i = 0; i < frames; i += 1) {
+    const s = Math.max(-1, Math.min(1, data[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    offset += 2;
+  }
+  return new Blob([out], { type: 'audio/wav' });
 }
 
 /* ─────────────────────────── Confirm ─────────────────────────── */
@@ -1028,51 +1106,49 @@ function HistoryPanel({ history }: { history: History }) {
 
   return (
     <div className="relative z-10 mt-16 grid gap-10 border-t border-[var(--line)] pt-14 sm:mt-20 lg:max-w-3xl lg:grid-cols-1 xl:max-w-none xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-      {true && (
-        <div>
-          <div className="flex items-baseline justify-between gap-4">
-            <span className="eyebrow">Last fourteen days</span>
-            <span className="font-mono text-[0.65rem] text-ash/50">
-              {checkIns} {checkIns === 1 ? 'check-in' : 'check-ins'}
-            </span>
-          </div>
-          <div className="mt-5 flex h-32 items-end gap-1.5">
-            {history.trend.map((p) => {
-              // −2…+2 mapped onto the bar height, with a floor so empty days
-              // still show a tick rather than vanishing.
-              const height = p.count === 0 ? 4 : Math.max(8, ((p.score + 2) / 4) * 100);
-              return (
-                <div key={p.day} className="group relative flex-1">
-                  <div
-                    className={cn(
-                      'w-full rounded-sm transition-colors',
-                      p.count === 0 ? 'bg-cream/8' : p.score >= 0 ? 'bg-gold' : 'bg-cocoa-soft',
-                    )}
-                    style={{ height: `${height}%` }}
-                    title={`${p.day}: ${p.count === 0 ? 'no check-in' : p.score.toFixed(1)}`}
-                  />
-                </div>
-              );
-            })}
-          </div>
-          <div className="mt-2 flex justify-between font-mono text-[0.6rem] text-ash/50">
-            <span>14 days ago</span>
-            <span>today</span>
-          </div>
-
-          {history.workload.message ? (
-            <p className="mt-6 rounded-xl border border-gold/20 bg-gold/[0.05] p-4 text-sm leading-relaxed text-cream/90">
-              {history.workload.message}
-            </p>
-          ) : (
-            <p className="mt-6 text-sm leading-relaxed text-ash/70">
-              {checkIns === 0
-                ? 'Nothing logged yet. Your first check-in appears here as soon as you finish one.'
-                : `Checking in on four separate days lets me compare your mood against how busy those days were. ${history.workload.daysCompared} so far.`}
-            </p>
-          )}
+      <div>
+        <div className="flex items-baseline justify-between gap-4">
+          <span className="eyebrow">Last fourteen days</span>
+          <span className="font-mono text-[0.65rem] text-ash/50">
+            {checkIns} {checkIns === 1 ? 'check-in' : 'check-ins'}
+          </span>
         </div>
-      )}
+        <div className="mt-5 flex h-32 items-end gap-1.5">
+          {history.trend.map((p) => {
+            // −2…+2 mapped onto the bar height, with a floor so empty days
+            // still show a tick rather than vanishing.
+            const height = p.count === 0 ? 4 : Math.max(8, ((p.score + 2) / 4) * 100);
+            return (
+              <div key={p.day} className="group relative flex-1">
+                <div
+                  className={cn(
+                    'w-full rounded-sm transition-colors',
+                    p.count === 0 ? 'bg-cream/8' : p.score >= 0 ? 'bg-gold' : 'bg-cocoa-soft',
+                  )}
+                  style={{ height: `${height}%` }}
+                  title={`${p.day}: ${p.count === 0 ? 'no check-in' : p.score.toFixed(1)}`}
+                />
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-2 flex justify-between font-mono text-[0.6rem] text-ash/50">
+          <span>14 days ago</span>
+          <span>today</span>
+        </div>
+
+        {history.workload.message ? (
+          <p className="mt-6 rounded-xl border border-gold/20 bg-gold/[0.05] p-4 text-sm leading-relaxed text-cream/90">
+            {history.workload.message}
+          </p>
+        ) : (
+          <p className="mt-6 text-sm leading-relaxed text-ash/70">
+            {checkIns === 0
+              ? 'Nothing logged yet. Your first check-in appears here as soon as you finish one.'
+              : `Checking in on four separate days lets me compare your mood against how busy those days were. ${history.workload.daysCompared} so far.`}
+          </p>
+        )}
+      </div>
 
       <div>
         <span className="eyebrow">What works for you</span>
@@ -1083,22 +1159,22 @@ function HistoryPanel({ history }: { history: History }) {
           </p>
         ) : (
           <>
-          <ul className="mt-5 space-y-2.5">
-            {history.worksForYou.map((w) => (
-              <li key={w.techniqueId} className="flex items-center gap-3">
-                <span className="min-w-0 flex-1 truncate text-sm text-cream/90">{w.title}</span>
-                <span className="h-1 w-20 shrink-0 overflow-hidden rounded-full bg-cream/10">
-                  <span className="block h-full bg-gold" style={{ width: `${w.rate * 100}%` }} />
-                </span>
-                <span className="shrink-0 font-mono text-[0.65rem] text-ash/60">
-                  {w.helped}/{w.tried}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-4 text-xs leading-relaxed text-ash/60">
-            Anything you say did not help stops being suggested first.
-          </p>
+            <ul className="mt-5 space-y-2.5">
+              {history.worksForYou.map((w) => (
+                <li key={w.techniqueId} className="flex items-center gap-3">
+                  <span className="min-w-0 flex-1 truncate text-sm text-cream/90">{w.title}</span>
+                  <span className="h-1 w-20 shrink-0 overflow-hidden rounded-full bg-cream/10">
+                    <span className="block h-full bg-gold" style={{ width: `${w.rate * 100}%` }} />
+                  </span>
+                  <span className="shrink-0 font-mono text-[0.65rem] text-ash/60">
+                    {w.helped}/{w.tried}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 text-xs leading-relaxed text-ash/60">
+              Anything you say did not help stops being suggested first.
+            </p>
           </>
         )}
       </div>

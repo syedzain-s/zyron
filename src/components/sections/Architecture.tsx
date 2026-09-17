@@ -12,7 +12,7 @@ const LAYERS = [
   {
     name: 'Input handler',
     detail:
-      'Voice notes, WhatsApp, mail, wearables and the web console all land here as one normalised event.',
+      'Voice notes, mail, wearables and the web console all land here as one normalised event.',
   },
   {
     name: 'Master orchestrator',

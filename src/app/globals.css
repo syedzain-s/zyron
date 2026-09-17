@@ -1,4 +1,4 @@
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -6,7 +6,7 @@
    Palette variables.
 
    Tailwind tokens cover most of the work, but gradients, color-mix and the
-   default border colour need raw values. These mirror tailwind.config.ts —
+   default border colour need raw values. These mirror tailwind.config.ts â€”
    change one, change the other.
 
    Gold is an accent only. It appears on rules, labels, small marks and single
@@ -113,7 +113,7 @@
   }
 
   /* Polished gold. A wide metallic ramp with a narrow specular band that
-     travels across the letterforms — the bright stop is what separates this
+     travels across the letterforms â€” the bright stop is what separates this
      from a plain two-stop gradient. */
   .gold-text {
     background: linear-gradient(
@@ -138,7 +138,7 @@
     animation: sheen 8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   }
 
-  /* Layered depth for display type. Headline only — it is loud. */
+  /* Layered depth for display type. Headline only â€” it is loud. */
   .display-3d {
     text-shadow:
       0 1px 0 var(--type-edge),
@@ -225,7 +225,7 @@
    Drawn as an inline SVG rather than shipped as a PNG: it scales on a retina
    screen, it is one colour to change, and there is no extra file to load.
 
-   Desktop only, and only where a real pointer exists — replacing the cursor on
+   Desktop only, and only where a real pointer exists â€” replacing the cursor on
    a touch device does nothing but confuse the accessibility tree.
 --------------------------------------------------------------------------- */
 
@@ -282,3 +282,20 @@
     background-position: 40% 50%;
   }
 }
+
+/* === Robotic hand cursor === */
+/* Hotspot (27,1) is the fingertip, so clicks land where the finger points.
+   !important is deliberate: Tailwind's cursor-* utilities would otherwise win. */
+html, body, * {
+  cursor: url('/cursors/robot-hand-gold-64.png') 51 1, auto !important;
+}
+input:not([type="button"]):not([type="submit"]):not([type="file"]),
+textarea, [contenteditable="true"] {
+  cursor: url('/cursors/robot-hand-gold-64.png') 51 1, text !important;
+}
+@media (hover: none) {
+  html, body, * { cursor: auto !important; }
+}
+
+
+

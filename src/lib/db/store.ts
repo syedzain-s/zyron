@@ -19,8 +19,12 @@ export interface ApprovalRecord {
   payload: string;
   risk: RiskLevel;
   status: ApprovalStatus;
+  deliveryDetail?: string;
+  deliveryChannel?: string;
+  deliveryReference?: string;
   createdAt: number;
   resolvedAt?: number;
+  attachment?: { documentId: string; filename: string; mimeType: string };
 }
 
 export interface CommitmentRecord {
@@ -64,6 +68,7 @@ export interface ZyronStore {
     status: ApprovalStatus,
     payload?: string,
   ): Promise<ApprovalRecord | null>;
+  recordDelivery(userId: string, id: string, detail: string, channel: string, reference?: string): Promise<ApprovalRecord | null>;
 
   listCommitments(userId: string): Promise<CommitmentRecord[]>;
   createCommitments(records: Array<Omit<CommitmentRecord, 'id'>>): Promise<CommitmentRecord[]>;
@@ -115,6 +120,16 @@ class MongoStore implements ZyronStore {
     const result = await col.findOneAndUpdate(
       { id, userId },
       { $set: update },
+      { returnDocument: 'after' },
+    );
+    return result ? stripId<ApprovalRecord>(result) : null;
+  }
+
+  async recordDelivery(userId: string, id: string, detail: string, channel: string, reference?: string) {
+    const col = await this.col('approvals');
+    const result = await col.findOneAndUpdate(
+      { id, userId },
+      { $set: { deliveryDetail: detail, deliveryChannel: channel, deliveryReference: reference } },
       { returnDocument: 'after' },
     );
     return result ? stripId<ApprovalRecord>(result) : null;
@@ -216,6 +231,15 @@ class MemoryStore implements ZyronStore {
     found.status = status;
     found.resolvedAt = Date.now();
     if (payload !== undefined) found.payload = payload;
+    return found;
+  }
+
+  async recordDelivery(userId: string, id: string, detail: string, channel: string, reference?: string) {
+    const found = this.approvals.find((a) => a.id === id && a.userId === userId);
+    if (!found) return null;
+    found.deliveryDetail = detail;
+    found.deliveryChannel = channel;
+    found.deliveryReference = reference;
     return found;
   }
 

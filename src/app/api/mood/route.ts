@@ -193,7 +193,8 @@ export async function POST(req: Request) {
     return finish(reading.mood, source, reading.confidence, false, body.note, reading);
   } catch (error) {
     if (error instanceof ModelError) {
-      return NextResponse.json({ error: error.userMessage }, { status: 502 });
+      const status = error.status === 429 || error.status === 503 ? error.status : 502;
+      return NextResponse.json({ error: error.userMessage }, { status });
     }
     console.error('[zyron] mood read failed', error);
     return NextResponse.json(

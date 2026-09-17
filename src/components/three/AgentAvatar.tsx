@@ -67,7 +67,7 @@ export function AgentAvatar({
    * Two corrections are applied at load, both traceable to the source file.
    *
    * The model came out of FBX, which is Z-up, and its transform chain leaves a
-   * -90° rotation about X on the armature that nothing cancels. Left alone the
+  * +90° rotation about X on the armature that nothing cancels. Left alone the
    * figure lies on its back with the legs above the body.
    *
    * Then, rather than hand-tuning scale and Y offset until it looks right, the
@@ -85,7 +85,7 @@ export function AgentAvatar({
     // cloned bones, which is the whole reason it exists.
     const clone = cloneSkinned(scene);
 
-    // Undo the leftover Z-up correction.
+    // Convert the source's Z-up orientation to the scene's Y-up orientation.
     clone.rotation.x = Math.PI / 2;
     clone.updateMatrixWorld(true);
 
@@ -234,8 +234,16 @@ export function AgentAvatar({
     const wantJump = state === 'activity' ? 1 : 0;
     jump.current = damp(jump.current, wantJump, 4, dt);
     const hop = Math.abs(Math.sin(t * 2.4)) * 0.34 * jump.current;
-    inner.current.position.y = hop;
+    const cruise = state === 'activity' ? Math.sin(t * 1.7) * 0.18 : Math.sin(t * 1.1) * 0.035;
+    const flight = state === 'activity' ? Math.sin(t * 0.75) * 0.55 : 0;
+    inner.current.position.y = hop + cruise + flight;
     inner.current.scale.setScalar(1 - hop * 0.06);
+
+    // Let the active state travel in a visible loop, like a small flying scout,
+    // while keeping the other states close to their presentation position.
+    const drift = state === 'activity' ? Math.sin(t * 0.42) * 0.7 : 0;
+    group.current.position.x = position[0] + drift;
+    group.current.position.z = position[2] + (state === 'activity' ? Math.cos(t * 0.42) * 0.28 : 0);
 
     // Thinking: a slow scan, as if working something out.
     const scan = state === 'thinking' ? Math.sin(t * 0.9) * 0.3 : 0;

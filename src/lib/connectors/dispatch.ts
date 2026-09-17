@@ -21,6 +21,7 @@
  */
 
 import { isConnected, googleConfigured, sendGmail, GoogleError } from '@/lib/connectors/google';
+import { DEFAULT_USER, getDocumentStore } from '@/lib/db/documents';
 
 export type Channel = 'gmail' | 'telegram' | 'simulated';
 
@@ -33,6 +34,7 @@ export interface DispatchPayload {
   body: string;
   risk: string;
   decidedAt: number;
+  attachment?: { documentId: string; filename: string; mimeType: string };
 }
 
 export interface DispatchResult {
@@ -98,7 +100,24 @@ export async function dispatchApproval(payload: DispatchPayload): Promise<Dispat
 async function sendViaGmail(payload: DispatchPayload): Promise<DispatchResult> {
   try {
     const { subject, body } = splitSubject(payload);
-    const sent = await sendGmail({ to: payload.target, subject, body });
+    const attachment = payload.attachment
+      ? await getDocumentStore().get(DEFAULT_USER, payload.attachment.documentId)
+      : null;
+    if (payload.attachment && !attachment?.contentBase64) {
+      throw new GoogleError('The uploaded PDF is no longer available. Upload it again before sending.');
+    }
+    const sent = await sendGmail({
+      to: payload.target,
+      subject,
+      body,
+      attachment: attachment?.contentBase64
+        ? {
+            filename: payload.attachment!.filename,
+            mimeType: payload.attachment!.mimeType,
+            base64: attachment.contentBase64,
+          }
+        : undefined,
+    });
 
     return {
       delivered: true,

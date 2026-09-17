@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { Button } from './Button';
 
 const LINKS = [
+  { href: '/records', label: 'Records' },
   { href: '/#architecture', label: 'Architecture' },
   { href: '/#modules', label: 'Modules' },
   { href: '/mood', label: 'Check in' },

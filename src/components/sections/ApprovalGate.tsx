@@ -18,7 +18,7 @@ const SAMPLE: ApprovalRequest = {
   id: 'demo-1',
   moduleCode: 'CMS',
   moduleName: 'Communication Proxy',
-  action: 'Send a WhatsApp message and a calendar invite',
+  action: 'Send an email and a calendar invite',
   target: 'Alex Warner — client',
   payload:
     'Thursday 3:00 PM works. I have held 45 minutes and sent the invite — shout if you need the earlier slot instead.',

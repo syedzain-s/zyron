@@ -23,11 +23,14 @@ export interface StoredDocument {
   report: ContractReport;
   /** The extracted text, kept so a re-analysis never needs the original file. */
   text: string;
+  /** Original bytes, retained only so the user can send the uploaded document. */
+  contentBase64?: string;
+  mimeType?: string;
   createdAt: number;
 }
 
 /** What the list endpoint returns — the report without the full document text. */
-export type DocumentSummary = Omit<StoredDocument, 'text'>;
+export type DocumentSummary = Omit<StoredDocument, 'text' | 'contentBase64'>;
 
 export interface DocumentStore {
   readonly kind: 'mongo' | 'memory';
@@ -65,7 +68,7 @@ class MongoDocumentStore implements DocumentStore {
   async list(userId: string, limit = 20) {
     const col = await this.col();
     const docs = await col
-      .find({ userId }, { projection: { _id: 0, text: 0 } })
+      .find({ userId }, { projection: { _id: 0, text: 0, contentBase64: 0 } })
       .sort({ createdAt: -1 })
       .limit(limit)
       .toArray();
@@ -109,7 +112,7 @@ class MemoryDocumentStore implements DocumentStore {
     return this.docs
       .filter((d) => d.userId === userId)
       .slice(0, limit)
-      .map(({ text: _text, ...rest }) => rest);
+      .map(({ text: _text, contentBase64: _contentBase64, ...rest }) => rest);
   }
 
   async get(userId: string, id: string) {

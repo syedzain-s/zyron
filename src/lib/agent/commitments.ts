@@ -6,6 +6,7 @@ export interface ExtractedCommitment {
 
 const FIRST_PERSON = /\b(?:i(?:'|’)?ll|i will|i'm going to|i am going to|let me|i can)\s+([^.,;!?]{6,120})/gi;
 const DELEGATED = /\b(?:(?:i(?:'|’)?ll )?(?:assign|hand|pass|give)\s+(?:this|it|that)\s+to|ask)\s+([A-Z][a-z]+)\b/g;
+const SCHEDULED_ACTION = /\b(?:tomorrow|tomorow|kal|next week)\s+((?:send|email|mail|share|forward|upload|call|message|reply|deliver)\b[^.,;!?]{3,120})/i;
 
 /**
  * Written as plain literals rather than built from a joined array: a dynamic
@@ -14,7 +15,7 @@ const DELEGATED = /\b(?:(?:i(?:'|’)?ll )?(?:assign|hand|pass|give)\s+(?:this|i
  */
 const DUE_PATTERNS: RegExp[] = [
   /\bby (?:next |this )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
-  /\bby (tomorrow|tonight|today|end of day|eod|end of week|eow|next week|this week|month end)\b/i,
+  /\bby (tomorrow|tomorow|kal|tonight|today|end of day|eod|end of week|eow|next week|this week|month end)\b/i,
   /\bby (?:the )?(\d{1,2}(?:st|nd|rd|th)?(?: of)? [A-Za-z]+)\b/,
   /\b(?:before|until) ([^.,;!?]{3,30})\b/i,
 ];
@@ -31,12 +32,22 @@ export function extractCommitments(input: string): ExtractedCommitment[] {
   const due = findDue(input);
 
   for (const match of input.matchAll(FIRST_PERSON)) {
-    const body = match[1].trim();
+    const body = withoutDue(match[1].trim());
     if (body.length < 6) continue;
     const key = body.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     found.push({ text: capitalise(body), owner: 'You', due });
+  }
+
+  const scheduled = input.match(SCHEDULED_ACTION);
+  if (scheduled?.[1]) {
+    const body = scheduled[1].trim();
+    const key = body.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      found.push({ text: capitalise(withoutDue(body)), owner: 'You', due: due ?? 'Tomorrow' });
+    }
   }
 
   for (const match of input.matchAll(DELEGATED)) {
@@ -60,6 +71,13 @@ function findDue(input: string): string | null {
     if (match?.[1]) return capitalise(match[1].trim());
   }
   return null;
+}
+
+function withoutDue(value: string): string {
+  return value
+    .replace(/\s+\bby\s+(?:next\s+|this\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|tonight|today|end of day|eod|end of week|eow|next week|this week|month end)\b.*$/i, '')
+    .replace(/\s+\b(?:tomorrow|tomorow|kal)\b.*$/i, '')
+    .trim();
 }
 
 function capitalise(value: string) {

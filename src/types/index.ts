@@ -32,6 +32,7 @@ export interface ApprovalRequest {
   status: ApprovalStatus;
   resolvedAt?: number;
   deliveryDetail?: string;
+  attachment?: { documentId: string; filename: string; mimeType: string };
 }
 
 export type Speaker = 'user' | 'zyron' | 'system';

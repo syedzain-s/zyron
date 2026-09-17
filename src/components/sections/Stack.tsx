@@ -39,7 +39,7 @@ const LAYERS = [
   {
     name: 'Connectors',
     color: '#2C3852',
-    items: ['Gmail + Calendar', 'WhatsApp Cloud API', 'Wearables', 'Bank + OCR'],
+    items: ['Gmail + Calendar', 'Voice transcription', 'Wearables', 'Bank + OCR'],
     note: 'Each connector is an adapter with its own scopes, retries and rate limits.',
   },
 ];

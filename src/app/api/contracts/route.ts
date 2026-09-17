@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { analyseContract } from '@/lib/agent/contracts';
 import { ExtractionError, MAX_BYTES, extractDocument } from '@/lib/agent/documents';
+import { ModelError, readImage, visionAvailable } from '@/lib/agent/providers';
 import { DEFAULT_USER, getDocumentStore } from '@/lib/db/documents';
 import { getStore } from '@/lib/db/store';
 
@@ -58,19 +59,46 @@ export async function POST(req: Request) {
   const documents = getDocumentStore();
 
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    const bytes = await readUploadBytes(file);
+    // PDF.js may detach or consume the buffer it parses. Keep an untouched
+    // copy for MongoDB and email attachments after analysis completes.
+    const originalBytes = bytes.slice();
 
-    const extracted = await extractDocument({ name: file.name, type: file.type, bytes });
+    let extracted;
+    try {
+      extracted = await extractDocument({ name: file.name, type: file.type, bytes: bytes.slice() });
+    } catch (error) {
+      const isScanned = error instanceof ExtractionError && error.userMessage.includes('scanned document');
+      if (!isScanned || !visionAvailable()) throw error;
+
+      // A scanned PDF has no text layer. Render each page as PNG first: the
+      // vision path accepts images, while this Gemini model rejects inline PDF.
+      const { text: ocr, pages: scannedPages } = await ocrScannedPdf(originalBytes.slice());
+      if (ocr.trim().length < 80) throw error;
+      extracted = {
+        title: file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || 'Untitled document',
+        kind: 'pdf' as const,
+        text: ocr.trim(),
+        pages: scannedPages,
+        bytes: bytes.byteLength,
+      };
+    }
     const report = analyseContract(extracted.text, extracted.title);
+
+    if (originalBytes.byteLength === 0) {
+      throw new ExtractionError('The original PDF could not be retained. Upload the file again before storing it.');
+    }
 
     const saved = await documents.create({
       userId: DEFAULT_USER,
       title: extracted.title,
       kind: extracted.kind,
       pages: extracted.pages,
-      bytes: extracted.bytes,
+      bytes: originalBytes.byteLength,
       report,
       text: extracted.text,
+      contentBase64: Buffer.from(originalBytes).toString('base64'),
+      mimeType: file.type || 'application/pdf',
       createdAt: Date.now(),
     });
 
@@ -102,12 +130,87 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: error.userMessage }, { status: 422 });
     }
 
+    if (error instanceof ModelError) {
+      console.warn('[zyron] scanned PDF OCR unavailable:', error.userMessage);
+      return NextResponse.json(
+        { error: `The PDF needs OCR, but the vision model could not read it: ${error.userMessage}` },
+        { status: 503 },
+      );
+    }
+
     console.error('[zyron] contract analysis failed', error);
     return NextResponse.json(
       { error: 'The document could not be analysed. Try uploading it again.' },
       { status: 500 },
     );
   }
+}
+
+async function readUploadBytes(file: File): Promise<Uint8Array> {
+  const direct = new Uint8Array(await file.arrayBuffer());
+  if (direct.byteLength > 0) return direct;
+
+  // Some development runtimes expose a valid multipart File size but return
+  // an empty arrayBuffer. Reading the Web stream keeps the upload usable in
+  // that case and still works with the normal Next.js File implementation.
+  if (file.stream) {
+    const reader = file.stream().getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        if (chunk.value?.byteLength) {
+          chunks.push(chunk.value);
+          total += chunk.value.byteLength;
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    if (total > 0) {
+      const bytes = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return bytes;
+    }
+  }
+
+  throw new ExtractionError(
+    `The uploaded file arrived empty (declared size: ${file.size} bytes). Choose the PDF again and upload it from the file picker.`,
+  );
+}
+
+async function ocrScannedPdf(bytes: Uint8Array): Promise<{ text: string; pages: number }> {
+  const { definePDFJSModule, getDocumentProxy, renderPageAsImage } = await import('unpdf');
+  await definePDFJSModule(() => import('pdfjs-dist'));
+  const pdf = await getDocumentProxy(bytes);
+  const pages = pdf.numPages;
+  const limit = Math.min(pages, 8);
+  const text: string[] = [];
+
+  for (let page = 1; page <= limit; page += 1) {
+    const dataUrl = await renderPageAsImage(pdf, page, {
+      canvasImport: () => import('@napi-rs/canvas'),
+      scale: 1.5,
+      toDataURL: true,
+    });
+    const match = String(dataUrl).match(/^data:image\/png;base64,(.+)$/);
+    if (!match) continue;
+    const pageText = await readImage({
+      base64: match[1],
+      mimeType: 'image/png',
+      prompt: `OCR page ${page} of ${limit}. Transcribe all readable text in order, preserving headings, clause numbers, dates, names, and paragraph boundaries. Return only the transcription.`,
+      maxTokens: 2_000,
+    });
+    if (pageText.trim()) text.push(`Page ${page}\n${pageText.trim()}`);
+  }
+
+  return { text: text.join('\n\n'), pages };
 }
 
 export async function GET(req: Request) {

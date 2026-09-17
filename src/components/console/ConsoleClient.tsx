@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Link from 'next/link';
-import { ArrowUp, Camera, Inbox, LayoutGrid, Loader2, PanelLeft, PanelLeftClose, Paperclip, Upload, X } from 'lucide-react';
+import { Archive, ArrowUp, Camera, Inbox, LayoutGrid, Link2, Loader2, PanelLeft, PanelLeftClose, Paperclip, Upload, X } from 'lucide-react';
 import { SceneCanvas } from '@/components/three/SceneCanvas';
-import { AgentAvatar, type AvatarState } from '@/components/three/AgentAvatar';
 import { ParticleField } from '@/components/three/ParticleField';
 import { StageLights } from '@/components/three/StageLights';
 import { ApprovalCard } from '@/components/ui/ApprovalCard';
 import { ContractReport, ContractReportSkeleton } from './ContractReport';
 import { SideRail } from './SideRail';
+import { VoiceNoteRecorder } from './VoiceNoteRecorder';
 import { MODULES, getModule } from '@/lib/modules';
 import { cn, shortId } from '@/lib/utils';
 import type { ContractReport as Report } from '@/lib/agent/contracts';
@@ -26,6 +26,12 @@ type StreamItem = ConsoleMessage & {
   pages?: number;
   documentId?: string;
 };
+
+interface GoogleStatus {
+  connected: boolean;
+  configured: boolean;
+  email?: string | null;
+}
 
 const SUGGESTIONS = [
   'Brief me on today',
@@ -55,8 +61,8 @@ export function ConsoleClient() {
   const [railOpen, setRailOpen] = useState(true);
   /** Which panel is showing as a sheet on narrow screens. */
   const [sheet, setSheet] = useState<'modules' | 'queue' | null>(null);
-  const [speaking, setSpeaking] = useState(false);
   const [activeModules, setActiveModules] = useState<string[]>([]);
+  const [briefingLoaded, setBriefingLoaded] = useState(false);
 
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
@@ -67,15 +73,6 @@ export function ConsoleClient() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const pendingCount = approvals.filter((a) => a.status === 'pending').length;
-
-  const avatarState: AvatarState = busy || uploading ? 'thinking' : speaking ? 'speaking' : 'idle';
-
-  // Hold the speaking pose long enough to read as an answer being delivered.
-  useEffect(() => {
-    if (!speaking) return;
-    const id = window.setTimeout(() => setSpeaking(false), 4200);
-    return () => window.clearTimeout(id);
-  }, [speaking]);
 
   /* Hydrate from storage on mount — this is what makes the console stateful. */
   useEffect(() => {
@@ -132,6 +129,33 @@ export function ConsoleClient() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!hydrated || briefingLoaded) return;
+    setBriefingLoaded(true);
+    const readBriefing = () => {
+      fetch('/api/briefing', { cache: 'no-store' })
+        .then((res) => res.json())
+        .then((data) => {
+          if (!data.connected || !data.message) return;
+          const previous = window.localStorage.getItem('zyron-last-briefing');
+          if (previous === data.message) return;
+          window.localStorage.setItem('zyron-last-briefing', data.message);
+          setMessages((prev) => [...prev, {
+            id: shortId(),
+            speaker: 'zyron',
+            body: data.message,
+            routedTo: ['BRF'],
+            createdAt: Date.now(),
+          }]);
+        })
+        .catch(() => undefined);
+    };
+
+    readBriefing();
+    const timer = window.setInterval(readBriefing, 15 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [briefingLoaded, hydrated]);
 
   useEffect(() => {
     streamRef.current?.scrollTo({ top: streamRef.current.scrollHeight, behavior: 'smooth' });
@@ -199,7 +223,6 @@ export function ConsoleClient() {
             createdAt: Date.now(),
           },
         ]);
-        setSpeaking(true);
       } catch (error) {
         pushSystem(
           error instanceof Error
@@ -220,6 +243,10 @@ export function ConsoleClient() {
   const uploadFile = useCallback(
     async (file: File) => {
       if (uploading) return;
+      if (file.size === 0) {
+        pushSystem('That PDF is empty. Choose the original downloaded file and upload it again.');
+        return;
+      }
       setUploading(file.name);
       setActiveModules(['DOC']);
 
@@ -250,7 +277,6 @@ export function ConsoleClient() {
           },
         ]);
         if (data.storage) setStorage(data.storage);
-        setSpeaking(true);
       } catch (error) {
         pushSystem(error instanceof Error ? error.message : 'That upload failed. Try again.');
       } finally {
@@ -381,13 +407,17 @@ export function ConsoleClient() {
       onDrop={onDrop}
       className="relative flex h-[100svh] flex-col overflow-hidden bg-ink pt-[4.5rem]"
     >
-      <div className="pointer-events-none absolute inset-0">
-        <SceneCanvas label="console" lazy={false} camera={{ position: [0, 0.4, 7] }}>
+      <div className="pointer-events-none absolute inset-y-0 left-0 right-0 z-20 lg:right-[330px]">
+        <SceneCanvas
+          label="console"
+          lazy={false}
+          camera={{ position: [0, 0.25, 7.6] }}
+          style={{ pointerEvents: 'none' }}
+        >
           {/* Metal needs an environment to reflect, so unlike the old orb this
               scene cannot run with the lighting rig switched off. */}
           <StageLights />
           <ParticleField count={360} radius={15} parallax={0.18} />
-          <AgentAvatar state={avatarState} position={[3.4, -1.5, -1.2]} />
         </SceneCanvas>
       </div>
 
@@ -432,6 +462,13 @@ export function ConsoleClient() {
                   <Camera className="h-3.5 w-3.5 shrink-0" />
                   Check in on yourself
                 </Link>
+                <Link
+                  href="/records"
+                  className="mx-2 mb-2 flex items-center gap-3 rounded-xl border border-white/10 px-3 py-2.5 text-xs text-ash transition-colors hover:border-gold/30 hover:text-gold"
+                >
+                  <Archive className="h-3.5 w-3.5 shrink-0" />
+                  Records and replies
+                </Link>
                 <ModuleList
                   modules={railModules}
                   active={activeModules}
@@ -443,7 +480,7 @@ export function ConsoleClient() {
         </AnimatePresence>
 
         {/* Command stream */}
-        <main className="flex min-w-0 flex-1 flex-col">
+        <main className="relative z-30 flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-3 border-b px-5 py-3">
             <button
               onClick={() => setRailOpen((v) => !v)}
@@ -453,6 +490,8 @@ export function ConsoleClient() {
               {railOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
             </button>
             <span className="text-sm text-cream">Command stream</span>
+
+            <GoogleConnection />
 
             {/* Below lg the module rail is gone; below xl the queue is too.
                 These put both back within one tap instead of leaving the
@@ -545,6 +584,12 @@ export function ConsoleClient() {
               >
                 <Paperclip className="h-4 w-4" />
               </button>
+
+              <VoiceNoteRecorder
+                disabled={Boolean(busy || uploading)}
+                onTranscript={(transcript) => void send(transcript)}
+                onError={pushSystem}
+              />
 
               <textarea
                 ref={inputRef}
@@ -643,6 +688,34 @@ export function ConsoleClient() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function GoogleConnection() {
+  const [status, setStatus] = useState<GoogleStatus | null>(null);
+
+  useEffect(() => {
+    fetch('/api/google', { cache: 'no-store' })
+      .then((res) => res.json() as Promise<GoogleStatus>)
+      .then(setStatus)
+      .catch(() => undefined);
+  }, []);
+
+  if (!status || !status.configured) return null;
+
+  return status.connected ? (
+    <span className="ml-2 hidden max-w-[13rem] items-center gap-1.5 truncate rounded-lg border border-signal-ok/20 bg-signal-ok/[0.06] px-2.5 py-1.5 font-mono text-[0.62rem] text-signal-ok sm:flex">
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-signal-ok" />
+      <span className="truncate">Google {status.email ?? 'connected'}</span>
+    </span>
+  ) : (
+    <a
+      href="/api/google?connect=1"
+      className="ml-2 flex items-center gap-1.5 rounded-lg border border-gold/30 px-2.5 py-1.5 text-[0.68rem] text-gold transition-colors hover:bg-gold/10"
+    >
+      <Link2 className="h-3.5 w-3.5" />
+      Connect Google
+    </a>
   );
 }
 
@@ -750,7 +823,7 @@ function MessageRow({
           onDismiss={() => onRemoveDocument(message.id, message.documentId)}
         />
       ) : (
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-cream/90">{message.body}</p>
+        <RichMessageBody body={message.body} />
       )}
 
       {message.approval && (
@@ -759,5 +832,27 @@ function MessageRow({
         </div>
       )}
     </motion.div>
+  );
+}
+
+function RichMessageBody({ body }: { body: string }) {
+  return (
+    <div className="space-y-2 text-sm leading-relaxed text-cream/90">
+      {body.split('\n').map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div key={index} className="h-1" />;
+        const heading = /^(Calendar|Priority email|Important email|Here is your live briefing\.)$/i.test(trimmed);
+        const bullet = trimmed.replace(/^[-•]\s*/, '');
+        return heading ? (
+          <p key={index} className="pt-2 font-mono text-[0.68rem] uppercase tracking-[0.14em] text-gold">
+            {trimmed}
+          </p>
+        ) : (
+          <p key={index} className={line.startsWith('  ') ? 'pl-3 text-ash' : ''}>
+            {bullet}
+          </p>
+        );
+      })}
+    </div>
   );
 }

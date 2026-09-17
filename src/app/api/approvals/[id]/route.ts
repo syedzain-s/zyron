@@ -67,8 +67,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       target: updated.target,
       body: updated.payload,
       risk: updated.risk,
+      attachment: updated.attachment,
       decidedAt: Date.now(),
     });
+    await store.recordDelivery(DEFAULT_USER, updated.id, result.detail, result.channel, result.reference);
 
     await audit(
       `approval.${body.status}`,

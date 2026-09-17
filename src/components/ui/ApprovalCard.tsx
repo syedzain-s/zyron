@@ -78,6 +78,12 @@ export function ApprovalCard({ request, onResolve, compact }: ApprovalCardProps)
         )}
       </div>
 
+      {request.attachment && (
+        <p className="mt-3 rounded-lg border border-gold/20 bg-gold/[0.05] px-3 py-2 text-xs text-gold">
+          Attachment: {request.attachment.filename}
+        </p>
+      )}
+
       {settled ? (
         <p className="mt-4 font-mono text-xs text-ash/70">
           {request.deliveryDetail ??

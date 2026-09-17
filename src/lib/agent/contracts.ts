@@ -178,10 +178,10 @@ const RULES: Rule[] = [
 
 /** Protections whose absence is itself worth reporting. */
 const EXPECTED: Array<{ id: string; label: string; pattern: RegExp }> = [
-  { id: 'liability-cap', label: 'A cap on your total liability', pattern: /\b(liability (?:shall|will) (?:not exceed|be limited)|aggregate liability|cap on liability)\b/i },
-  { id: 'termination-convenience', label: 'A right to exit without cause', pattern: /\b(terminate .{0,30}for convenience|without cause)\b/i },
-  { id: 'force-majeure', label: 'A force majeure clause', pattern: /\bforce majeure\b/i },
-  { id: 'data-protection', label: 'Anything about how your data is handled', pattern: /\b(data protection|personal data|GDPR|privacy)\b/i },
+  { id: 'liability-cap', label: 'A limit on how much you could owe', pattern: /\b(liability (?:shall|will) (?:not exceed|be limited)|aggregate liability|cap on liability)\b/i },
+  { id: 'termination-convenience', label: 'A way to end the contract early', pattern: /\b(terminate .{0,30}for convenience|without cause)\b/i },
+  { id: 'force-majeure', label: 'Protection when unexpected events happen', pattern: /\bforce majeure\b/i },
+  { id: 'data-protection', label: 'Rules for protecting your personal data', pattern: /\b(data protection|personal data|GDPR|privacy)\b/i },
 ];
 
 /* ────────────────────────────── Analysis ────────────────────────────── */

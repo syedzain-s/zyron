@@ -31,9 +31,9 @@ export const MODULES: AgentModule[] = [
   },
   {
     id: 3, code: 'CMS', name: 'Message Handler', tagline: 'Speaks in your voice, waits for your nod',
-    functionality: 'Handles WhatsApp, email and voice notes end to end.',
+    functionality: 'Handles email and voice notes end to end.',
     execution: 'Transcribes voice notes, checks your calendar before replying to a scheduling request, and queues the finished draft for one-tap dispatch.',
-    inputs: ['WhatsApp API', 'Voice notes', 'Mail'],
+    inputs: ['Voice notes', 'Mail'],
     action: 'Drafts and dispatches on approval',
     benefit: 'Inbox stops being a job',
     tier: 'core', risk: 'approval', icon: MessagesSquare,
@@ -113,7 +113,7 @@ export const MODULES: AgentModule[] = [
   {
     id: 12, code: 'CNT', name: 'Emergency Handover', tagline: 'If you go quiet, the business does not',
     functionality: 'A dead-man\'s switch for your operational knowledge.',
-    execution: 'After a configured silence it checks in across call, SMS and WhatsApp. With no answer it releases an encrypted package — pending approvals, live deals, key contacts — to your named trustee.',
+    execution: 'After a configured silence it checks in across call and SMS. With no answer it releases an encrypted package — pending approvals, live deals, key contacts — to your named trustee.',
     inputs: ['Interaction telemetry', 'Trustee registry'],
     action: 'Escalates, then releases the sealed package',
     benefit: 'Continuity survives the worst day',

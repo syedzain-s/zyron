@@ -26,6 +26,7 @@ const SCOPES = [
 ].join(' ');
 
 const TOKEN_COLLECTION = 'google_tokens';
+const CONTACT_COLLECTION = 'google_contacts';
 const TIMEOUT_MS = 15_000;
 
 export interface GoogleTokens {
@@ -233,18 +234,22 @@ export interface CalendarEvent {
 }
 
 export async function todaysEvents(): Promise<CalendarEvent[]> {
+  return upcomingEvents(1);
+}
+
+export async function upcomingEvents(days = 7): Promise<CalendarEvent[]> {
   const token = await accessToken();
 
   const now = new Date();
   const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+  const dayEnd = new Date(dayStart.getTime() + days * 86_400_000);
 
   const params = new URLSearchParams({
     timeMin: dayStart.toISOString(),
     timeMax: dayEnd.toISOString(),
     singleEvents: 'true',
     orderBy: 'startTime',
-    maxResults: '25',
+    maxResults: '50',
   });
 
   const res = await get(
@@ -281,11 +286,32 @@ export async function todaysEvents(): Promise<CalendarEvent[]> {
 /* ─────────────────────────── Gmail ─────────────────────────── */
 
 export interface MailSummary {
+  id: string;
   from: string;
   subject: string;
   snippet: string;
   receivedAt: string;
   unread: boolean;
+  important: boolean;
+  body: string;
+}
+
+export function readableSender(raw: string): string {
+  const match = raw.match(/^\s*"?([^"<]*)"?\s*<[^>]+>\s*$/);
+  return (match?.[1]?.trim() || raw.split('<')[0]?.trim() || raw).replace(/^"|"$/g, '');
+}
+
+export function cleanMailText(value: string, limit = 180): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit);
 }
 
 export async function recentMail(limit = 12): Promise<MailSummary[]> {
@@ -294,7 +320,7 @@ export async function recentMail(limit = 12): Promise<MailSummary[]> {
   // Only the primary inbox category: promotions and social are noise in a
   // briefing, and including them buries whatever actually mattered.
   const params = new URLSearchParams({
-    q: 'category:primary newer_than:2d',
+    q: 'category:primary',
     maxResults: String(limit),
   });
 
@@ -321,23 +347,137 @@ export async function recentMail(limit = 12): Promise<MailSummary[]> {
       const m = (await res.json()) as {
         snippet?: string;
         labelIds?: string[];
-        payload?: { headers?: Array<{ name: string; value: string }> };
+        payload?: GmailPayload;
       };
 
       const header = (name: string) =>
         m.payload?.headers?.find((h) => h.name.toLowerCase() === name)?.value ?? '';
 
       return {
+        id,
         from: header('from'),
         subject: header('subject') || '(no subject)',
         snippet: (m.snippet ?? '').slice(0, 180),
         receivedAt: header('date'),
         unread: (m.labelIds ?? []).includes('UNREAD'),
+        important: (m.labelIds ?? []).includes('IMPORTANT'),
+        body: '',
       } satisfies MailSummary;
     }),
   );
 
   return messages.filter((m): m is MailSummary => m !== null);
+}
+
+/** Returns recent inbox replies from a specific address without modifying Gmail. */
+export async function recentReplies(from: string, limit = 10): Promise<MailSummary[]> {
+  const token = await accessToken();
+  const ids = await listMessageIds(token, `from:${from} in:inbox`, limit);
+  if (ids.length === 0) return [];
+
+  const messages = await Promise.all(
+    ids.map(async ({ id }) => {
+      const res = await get(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`,
+        token,
+      );
+      if (!res.ok) return null;
+
+      const message = (await res.json()) as {
+        snippet?: string;
+        labelIds?: string[];
+        payload?: GmailPayload;
+      };
+      const header = (name: string) =>
+        message.payload?.headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
+
+      return {
+        id,
+        from: header('from'),
+        subject: header('subject') || '(no subject)',
+        snippet: (message.snippet ?? '').slice(0, 240),
+        receivedAt: header('date'),
+        unread: (message.labelIds ?? []).includes('UNREAD'),
+        important: (message.labelIds ?? []).includes('IMPORTANT'),
+        body: cleanMessageBody(messageBody(message.payload)),
+      } satisfies MailSummary;
+    }),
+  );
+
+  return messages.filter((message): message is MailSummary => message !== null);
+}
+
+/** Reads readable plain text from Gmail's nested MIME payload. */
+function messageBody(payload?: GmailPayload): string {
+  if (!payload) return '';
+  if (payload.mimeType === 'text/plain' && payload.body?.data) return decodeBase64Url(payload.body.data);
+  for (const part of payload.parts ?? []) {
+    const body = messageBody(part);
+    if (body) return body;
+  }
+  return '';
+}
+
+function decodeBase64Url(value: string): string {
+  return Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64')
+    .toString('utf8')
+    .replace(/\r\n/g, '\n')
+    .trim();
+}
+
+/** Turns Gmail's raw body into a short readable preview, not a quoted archive. */
+function cleanMessageBody(value: string, limit = 900): string {
+  const normalized = value
+    .replace(/[\u200b-\u200f\u2060\ufeff]/g, '')
+    .replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  const lines: string[] = [];
+  for (const line of normalized.split('\n')) {
+    const clean = line.replace(/^\s+/, '').trimEnd();
+    if (/^On .+ wrote:$/i.test(clean) || /^-{5,}$/.test(clean) || /^From:\s/i.test(clean)) break;
+    if (clean.startsWith('>')) break;
+    if (clean) lines.push(clean);
+  }
+
+  const result = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (result.length <= limit) return result;
+  const clipped = result.slice(0, limit).replace(/\s+\S*$/, '').trim();
+  return `${clipped}…`;
+}
+
+interface GmailPayload {
+  mimeType?: string;
+  body?: { data?: string };
+  parts?: GmailPayload[];
+  headers?: Array<{ name: string; value: string }>;
+}
+
+/** Recent inbox mail with full readable body, used by the records view. */
+export async function recentInbox(limit = 30): Promise<MailSummary[]> {
+  const token = await accessToken();
+  const ids = await listMessageIds(token, 'in:inbox', limit);
+  const messages = await Promise.all(ids.map(async ({ id }) => {
+    const res = await get(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, token);
+    if (!res.ok) return null;
+    const message = await res.json() as { snippet?: string; labelIds?: string[]; payload?: GmailPayload };
+    const header = (name: string) => message.payload?.headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
+    return {
+      id,
+      from: header('from'),
+      subject: header('subject') || '(no subject)',
+      snippet: (message.snippet ?? '').slice(0, 240),
+      receivedAt: header('date'),
+      unread: (message.labelIds ?? []).includes('UNREAD'),
+      important: (message.labelIds ?? []).includes('IMPORTANT'),
+      body: cleanMessageBody(messageBody(message.payload)),
+    } satisfies MailSummary;
+  }));
+  return messages.filter((message): message is MailSummary => message !== null);
 }
 
 /* ─────────────────────────── Gmail send ─────────────────────────── */
@@ -361,6 +501,7 @@ export async function sendGmail(input: {
   to: string;
   subject: string;
   body: string;
+  attachment?: { filename: string; mimeType: string; base64: string };
 }): Promise<SentMail> {
   const to = extractAddress(input.to);
   if (!to) {
@@ -369,7 +510,7 @@ export async function sendGmail(input: {
 
   const subject = input.subject.trim() || '(no subject)';
   const token = await accessToken();
-  const raw = Buffer.from(buildMime(to, subject, input.body)).toString('base64url');
+  const raw = Buffer.from(buildMime(to, subject, input.body, input.attachment)).toString('base64url');
 
   const res = await postJson(
     'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
@@ -418,16 +559,47 @@ export function extractAddress(raw: string): string | null {
  * an Urdu or accented subject line otherwise arrives as mojibake, and the
  * failure is silent because Gmail accepts the message happily.
  */
-function buildMime(to: string, subject: string, body: string): string {
+function buildMime(
+  to: string,
+  subject: string,
+  body: string,
+  attachment?: { filename: string; mimeType: string; base64: string },
+): string {
+  if (!attachment) {
+    const headers = [
+      `To: ${to}`,
+      `Subject: ${encodeHeader(subject)}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset="UTF-8"',
+      'Content-Transfer-Encoding: 8bit',
+    ];
+    return `${headers.join('\r\n')}\r\n\r\n${body.replace(/\r?\n/g, '\r\n')}`;
+  }
+
+  const boundary = `zyron-${Date.now().toString(36)}`;
   const headers = [
     `To: ${to}`,
     `Subject: ${encodeHeader(subject)}`,
     'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+  ];
+  return [
+    headers.join('\r\n'),
+    '',
+    `--${boundary}`,
     'Content-Type: text/plain; charset="UTF-8"',
     'Content-Transfer-Encoding: 8bit',
-  ];
-  // Bare newlines are tolerated by Gmail but CRLF is what the spec asks for.
-  return `${headers.join('\r\n')}\r\n\r\n${body.replace(/\r?\n/g, '\r\n')}`;
+    '',
+    body.replace(/\r?\n/g, '\r\n'),
+    `--${boundary}`,
+    `Content-Type: ${attachment.mimeType}; name="${attachment.filename}"`,
+    `Content-Disposition: attachment; filename="${attachment.filename}"`,
+    'Content-Transfer-Encoding: base64',
+    '',
+    attachment.base64.match(/.{1,76}/g)?.join('\r\n') ?? attachment.base64,
+    `--${boundary}--`,
+    '',
+  ].join('\r\n');
 }
 
 function encodeHeader(value: string): string {
@@ -443,6 +615,63 @@ export interface Contact {
   email: string;
   /** How many recent messages this address appeared in. */
   seen: number;
+}
+
+interface RememberedContact extends Contact {
+  userId: string;
+  updatedAt: number;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __zyronRememberedContacts: RememberedContact[] | undefined;
+}
+
+/** Persists an address supplied or discovered once for future commands. */
+export async function rememberContact(name: string, email: string): Promise<void> {
+  const cleanName = name.trim().toLowerCase();
+  const cleanEmail = extractAddress(email);
+  if (!cleanName || !cleanEmail) return;
+
+  const record: RememberedContact = {
+    userId: DEFAULT_USER,
+    name: cleanName,
+    email: cleanEmail,
+    seen: 1,
+    updatedAt: Date.now(),
+  };
+
+  if (!mongoConfigured) {
+    const contacts = global.__zyronRememberedContacts ?? [];
+    const existing = contacts.find((contact) => contact.userId === DEFAULT_USER && contact.name === cleanName);
+    if (existing) Object.assign(existing, record);
+    else contacts.unshift(record);
+    global.__zyronRememberedContacts = contacts.slice(0, 100);
+    return;
+  }
+
+  const db = await getDb();
+  await db.collection(CONTACT_COLLECTION).updateOne(
+    { userId: DEFAULT_USER, name: cleanName },
+    { $set: record },
+    { upsert: true },
+  );
+}
+
+async function rememberedContact(name: string): Promise<Contact | null> {
+  const query = name.trim().toLowerCase();
+  if (!query) return null;
+
+  const contacts = mongoConfigured
+    ? await (await getDb()).collection(CONTACT_COLLECTION)
+        .find({ userId: DEFAULT_USER }, { projection: { _id: 0 } })
+        .toArray() as unknown as RememberedContact[]
+    : global.__zyronRememberedContacts ?? [];
+  const match = contacts.find(
+    (contact) => contact.userId === DEFAULT_USER &&
+      (contact.name.includes(query) || contact.email.includes(query)),
+  );
+  return match ? { name: match.name, email: match.email, seen: match.seen } : null;
 }
 
 /**
@@ -464,6 +693,9 @@ export async function findContact(name: string): Promise<Contact[]> {
   if (/^[\w.+-]+@[\w-]+\.[\w.]+$/.test(query)) {
     return [{ name: query.split('@')[0], email: query.toLowerCase(), seen: 1 }];
   }
+
+  const remembered = await rememberedContact(query).catch(() => null);
+  if (remembered) return [remembered];
 
   const token = await accessToken();
 

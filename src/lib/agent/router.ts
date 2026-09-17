@@ -21,21 +21,43 @@ export interface RouteResult {
  * why a command went where it went.
  */
 const SIGNATURES: Record<string, string[]> = {
-  BRF: ['briefing', 'brief', 'morning', 'today', 'my day', 'agenda', 'schedule overview', 'day summary', 'summary of my day'],
+  BRF: [
+    'briefing', 'brief', 'morning', 'today', 'my day', 'agenda', 'schedule overview',
+    'daily report', 'morning report', 'daily update', 'morning update', 'my update',
+    'give me an update', 'give me update', 'get me an update', 'get me update',
+    'what is the update', 'what is today', 'whats the update', "what's the update",
+    'what is happening', 'what is going on', 'status update', 'updates', 'update',
+    'brf', 'brief me', 'brief me on', 'tell me what is happening',
+    'show response', 'show reply', 'show the response', 'show the reply',
+    'what did', 'what did he say', 'what did she say', 'reply from', 'response from',
+    'day summary', 'summary of my day', 'read email', 'read emails', 'recent emails',
+    'important email', 'important emails', 'email parho', 'emails parho', 'mail parho',
+    'inbox parho', 'read calendar', 'show calendar', 'calendar batao', 'calendar btao',
+    'calendar dikhao', 'calendar likho', 'tomorrow plan', 'tomorrow schedule',
+    'kal kya karna', 'kal ka plan', 'kal ka schedule',
+  ],
   DSR: ['prep', 'dossier', 'before the meeting', 'background on', 'who am i meeting'],
-  CMS: ['send', 'reply', 'message', 'msg', 'whatsapp', 'email', 'mail', 'draft', 'text', 'respond', 'dm', 'write to', 'bhejo', 'bhej', 'bhejna', 'likho'],
+  CMS: [
+    'send', 'reply', 'message', 'msg', 'email', 'mail', 'draft', 'text', 'respond',
+    'dm', 'write to', 'tell', 'inform', 'let know', 'let him know', 'let her know', 'let them know',
+    'ping', 'bhejo', 'bhej', 'bhejna', 'likho', 'bolo', 'batao', 'btao', 'kaho', 'kehna', 'keh do',
+  ],
   BIO: ['tired', 'sleep', 'stress', 'burnout', 'energy', 'hrv', 'rest', 'recovery'],
   CLT: ['promise', 'commitment', 'follow up', 'i said i would', 'owe', 'deadline', 'forgetting', 'forgot', 'pending', 'outstanding', 'what do i owe'],
   PSG: ['traffic', 'late', 'delay', 'reschedule', 'move the meeting', 'running behind', 'calendar', 'my schedule', 'next meeting', 'free time', 'am i busy', 'meetings'],
   NEG: ['negotiate', 'negotiation', 'salary', 'raise', 'deal', 'counteroffer', 'practice', 'rehearse'],
-  FIN: ['subscription', 'invoice', 'receipt', 'charge', 'billing', 'refund', 'spend', 'expense'],
+  FIN: [
+    'subscription', 'subscriptions', 'duplicate subscription', 'paying for twice',
+    'charged twice', 'double charged', 'recurring charge', 'invoice', 'receipt',
+    'charge', 'billing', 'refund', 'spend', 'expense',
+  ],
   REP: ['review', 'mention', 'press', 'reputation', 'twitter', 'linkedin', 'sentiment', 'pr'],
   DJB: ['decision', 'decided', 'should i', 'bias', 'outcome', 'looking back'],
   DEL: ['assign', 'delegate', 'team', 'chase', 'nudge', 'handed off'],
   CNT: ['emergency contact', 'if something happens', 'continuity', 'trustee', 'dead man'],
   ROI: ['roi', 'performance report', 'how are you doing', 'saved me', 'impact'],
   TRV: ['flight', 'travel', 'trip', 'hotel', 'airport', 'itinerary', 'visa', 'passport'],
-  DOC: ['contract', 'agreement', 'clause', 'terms', 'legal', 'nda', 'sign'],
+  DOC: ['contract', 'agreement', 'clause', 'terms', 'legal', 'nda', 'sign', 'pdf', 'document', 'file'],
   HHM: ['bill', 'electricity', 'grocery', 'household', 'home', 'maintenance', 'school'],
   CMP: ['tax', 'filing', 'licence', 'license', 'compliance', 'renewal', 'regulatory'],
   PRP: ['rent', 'tenant', 'property', 'landlord', 'lease'],
@@ -55,7 +77,17 @@ const EFFECT_VERBS: Array<{ verb: string; effect: string }> = [
   { verb: 'mail', effect: 'send an email' },
   { verb: 'msg', effect: 'send a message' },
   { verb: 'dm', effect: 'send a message' },
+  { verb: 'tell', effect: 'send a message' },
+  { verb: 'inform', effect: 'send a message' },
+  { verb: 'let .{1,20} know', effect: 'send a message' },
+  { verb: 'ping', effect: 'send a message' },
   { verb: 'bhej', effect: 'send a message' },
+  { verb: 'bhejo', effect: 'send a message' },
+  { verb: 'bolo', effect: 'send a message' },
+  { verb: 'batao', effect: 'send a message' },
+  { verb: 'btao', effect: 'send a message' },
+  { verb: 'kaho', effect: 'send a message' },
+  { verb: 'keh do', effect: 'send a message' },
   { verb: 'text', effect: 'send a text' },
   { verb: 'pay', effect: 'move money' },
   { verb: 'transfer', effect: 'move money' },
@@ -119,7 +151,24 @@ function isSmallTalk(text: string): boolean {
 }
 
 export function routeIntent(input: string): RouteResult {
-  const text = input.toLowerCase();
+  // Voice notes and fast typing commonly swap these letters. Normalize only
+  // known command words so ordinary user text remains untouched.
+  const text = input
+    .toLowerCase()
+    .replace(/\bbreif\b/g, 'brief')
+    .replace(/\bbrif\b/g, 'brief')
+    .replace(/\bbrieffing\b/g, 'briefing')
+    .replace(/\bupdtae\b/g, 'update');
+
+  // Document inventory is a concrete local operation. Keep it ahead of the
+  // general scorer so phrases such as "show stored PDFs" cannot become small
+  // talk when the user uses a plural or an unfamiliar document label.
+  if (
+    /\b(?:show|list|which|what|give me)\b/i.test(text) &&
+    /\b(?:pdfs?|documents?|files?|contracts?)\b/i.test(text)
+  ) {
+    return { modules: ['DOC'], effects: [], risk: 'autonomous', confidence: 1, general: false };
+  }
 
   if (isSmallTalk(input)) {
     return { modules: [], effects: [], risk: 'autonomous', confidence: 1, general: true };
@@ -185,11 +234,11 @@ export function extractRecipient(input: string): string | null {
     // An address written out needs no interpretation, so it is tried first.
     /\b([\w.+-]+@[\w-]+\.[\w.]+)\b/,
     // Roman Urdu puts the name first: "israr ko email karo".
-    /\b([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)\s+ko\s+(?:email|mail|message|msg|text|reply)/iu,
-    // "email israr", "send a message to israr", "reply to israr", "msg israr"
-    /\b(?:reply|respond|write|message|msg|text|email|mail|send|dm|ping)\s+(?:an?\s+|the\s+)?(?:email|message|msg|text|note|mail|reply)?\s*(?:(?:to|ko)\s+)?([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)/iu,
-    // Bare "to israr" anywhere, as a last resort.
+    /\b([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)\s+ko\s+(?:email|mail|message|msg|text|reply|bhej(?:o|na)?|bolo|batao|kaho)/iu,
+    // Prefer an explicit destination before the broad "email israr" form.
     /\b(?:to|ko|for)\s+([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)/iu,
+    // "email israr", "send a message to israr", "reply to israr", "tell israr"
+    /\b(?:reply|respond|write|message|msg|text|email|mail|send|dm|ping|tell|inform|bhej(?:o|na)?)\s+(?:an?\s+|the\s+)?(?:email|message|msg|text|note|mail|reply|pdf|document|file)?\s*(?:(?:to|ko)\s+)?([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)/iu,
   ];
 
   for (const pattern of patterns) {
@@ -233,11 +282,12 @@ const STOP_WORDS = new Set([
   'confirm', 'confirming', 'let', 'know', 'please', 'asap', 'today', 'tomorrow',
   'aj', 'aaj', 'kal', 'abhi', 'kis', 'kya', 'kab', 'time', 'ana', 'aana', 'hai',
   'sorry', 'thanks', 'shukriya', 'karo', 'kar', 'karna', 'kardo', 'do', 'de',
-  'dena', 'bolo', 'batao', 'main', 'mai', 'hun', 'hoon', 'kroo', 'kro', 'kru',
-  'bhejo', 'bhej', 'bhejna', 'likho', 'kaho', 'kardo',
+  'dena', 'bolo', 'batao', 'btao', 'main', 'mai', 'hun', 'hoon', 'kroo', 'kro', 'kru',
+  'bhejo', 'bhej', 'bhejna', 'likho', 'kaho', 'kehna', 'how', 'what', 'when', 'where',
   // Nouns that follow a send verb but name a thing, not a person.
   'email', 'mail', 'message', 'msg', 'text', 'note', 'reply', 'draft', 'brief',
-  'briefing', 'report', 'summary', 'update', 'invite', 'something', 'anything',
+  'briefing', 'report', 'summary', 'update', 'invite', 'pdf', 'document', 'file',
+  'contract', 'agreement', 'something', 'anything',
   'everything', 'one', 'quick', 'short',
 ]);
 

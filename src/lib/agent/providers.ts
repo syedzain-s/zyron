@@ -3,12 +3,18 @@
  *
  * ZYRON should not care which company answers its questions. Everything above
  * this file asks for text or an image reading; this file decides who provides
- * it, based on whichever key is present in the environment:
+ * it, based on whichever keys are present in the environment.
  *
- *   GEMINI_API_KEY     → Google Gemini    (free tier, no card, does vision)
- *   ANTHROPIC_API_KEY  → Claude
- *   GROQ_API_KEY       → Groq             (fast, text only)
- *   none               → callers fall back to their own rule-based output
+ * Text and media are assigned separately, on purpose. A free tier is a single
+ * per-minute bucket, and when one provider carries both the briefing and the
+ * camera the camera empties the bucket the briefing needed. Two providers is
+ * two buckets.
+ *
+ *   TEXT   → GROQ_API_KEY (fast, generous free tier)
+ *            else ANTHROPIC_API_KEY, else GEMINI_API_KEY
+ *   MEDIA  → GEMINI_API_KEY (image and audio)
+ *            else ANTHROPIC_API_KEY (image only)
+ *   none   → callers fall back to their own rule-based output
  *
  * Written against each provider's REST endpoint rather than its SDK. Three
  * SDKs for three providers is three dependency trees and three sets of
@@ -54,42 +60,79 @@ export class ModelError extends Error {
   readonly status?: number;
   /** Safe to show a user — says what to do, never leaks the key or raw body. */
   readonly userMessage: string;
+  /** True when waiting would not help: the daily allowance is gone. */
+  readonly exhausted: boolean;
 
-  constructor(provider: Provider, userMessage: string, status?: number) {
+  constructor(provider: Provider, userMessage: string, status?: number, exhausted = false) {
     super(userMessage);
     this.name = 'ModelError';
     this.provider = provider;
     this.userMessage = userMessage;
     this.status = status;
+    this.exhausted = exhausted;
   }
 }
 
 const TIMEOUT_MS = 25_000;
 
+/**
+ * How hard to try again when the provider says "not right now".
+ *
+ * A free tier is limited per minute as well as per day, and the per-minute
+ * limit is the one that fires during a demonstration: two or three requests in
+ * quick succession is enough. Waiting a second and asking again clears it. The
+ * daily limit is different — no amount of waiting helps inside one sitting —
+ * so the two are told apart and only the first is retried.
+ */
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 1_200;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /* ─────────────────────────── Selection ─────────────────────────── */
 
-export function activeProvider(): Provider {
+/** Who writes prose. Groq first: it is the fastest and its free allowance is the largest. */
+export function textProvider(): Provider {
+  if (process.env.GROQ_API_KEY) return 'groq';
+  if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
+  if (process.env.GEMINI_API_KEY) return 'gemini';
+  return 'none';
+}
+
+/** Who reads an image or a recording. Gemini first: it is the only one here that hears. */
+export function mediaProvider(): Provider {
   if (process.env.GEMINI_API_KEY) return 'gemini';
   if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
-  if (process.env.GROQ_API_KEY) return 'groq';
   return 'none';
+}
+
+/**
+ * Kept for callers that ask "is any model configured at all". Answers with the
+ * text provider, since text is what most of the app needs.
+ */
+export function activeProvider(): Provider {
+  return textProvider();
+}
+
+/** Human-readable name for error messages, so "Gemini unavailable" is not shown when Groq failed. */
+export function providerLabel(p: Provider): string {
+  return p === 'gemini' ? 'Gemini' : p === 'anthropic' ? 'Claude' : p === 'groq' ? 'Groq' : 'the model';
 }
 
 /** Only Gemini and Claude can read an image on the current configuration. */
 export function visionAvailable(): boolean {
-  const p = activeProvider();
-  return p === 'gemini' || p === 'anthropic';
+  return mediaProvider() !== 'none';
 }
 
 /** Audio understanding is Gemini only here — Claude takes images, not sound. */
 export function audioAvailable(): boolean {
-  return activeProvider() === 'gemini';
+  return mediaProvider() === 'gemini';
 }
 
 /* ─────────────────────────── Text ─────────────────────────── */
 
 export async function generateText(req: TextRequest): Promise<string> {
-  const provider = activeProvider();
+  const provider = textProvider();
 
   switch (provider) {
     case 'gemini':
@@ -104,22 +147,22 @@ export async function generateText(req: TextRequest): Promise<string> {
 }
 
 export async function readImage(req: MediaRequest): Promise<string> {
-  const provider = activeProvider();
+  const provider = mediaProvider();
 
   if (provider === 'gemini') return geminiMedia(req);
   if (provider === 'anthropic') return anthropicVision(req);
 
   throw new ModelError(
     provider,
-    'The configured model cannot read images. Add a GEMINI_API_KEY to enable it.',
+    'No configured model can read images. Add a GEMINI_API_KEY to enable it.',
   );
 }
 
 /** Reads a short recording. Same call as an image — only the mime type differs. */
 export async function readAudio(req: MediaRequest): Promise<string> {
-  if (activeProvider() !== 'gemini') {
+  if (mediaProvider() !== 'gemini') {
     throw new ModelError(
-      activeProvider(),
+      mediaProvider(),
       'Voice check-in needs a GEMINI_API_KEY. Use the camera or pick your mood instead.',
     );
   }
@@ -152,14 +195,15 @@ const geminiModel = () => process.env.GEMINI_MODEL ?? resolvedModel ?? FALLBACK_
 
 /**
  * Asks the API for models this key can call, and picks the best fit. Prefers a
- * flash variant: faster and far more generous on a free tier than pro, which
- * matters when a page might fire several reads in a row.
+ * flash-lite or flash variant: faster and far more generous on a free tier than
+ * pro, which matters when a page might fire several reads in a row.
  */
 async function discoverGeminiModel(): Promise<string | null> {
   try {
-    const res = await withTimeout(
+    const res = await withTimeout((signal) =>
       fetch(`${GEMINI_BASE.replace('/models', '')}/models`, {
         headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY! },
+        signal,
       }),
     );
     if (!res.ok) return null;
@@ -173,9 +217,12 @@ async function discoverGeminiModel(): Promise<string | null> {
       .map((m) => (m.name ?? '').replace(/^models\//, ''))
       .filter(Boolean)
       // Image, audio, TTS and research variants answer a different question.
-      .filter((n) => !/(tts|image|transcribe|robotics|computer-use|research|lyria|banana|embedding)/i.test(n));
+      .filter((n) => !/(tts|image|transcribe|robotics|computer-use|research|lyria|banana|embedding|antigravity|omni)/i.test(n));
 
     const preferred =
+      // Flash-Lite carries the largest free daily allowance, so it is tried
+      // first — the limit, not the capability, is what breaks a demonstration.
+      usable.find((n) => /flash-lite/.test(n)) ??
       usable.find((n) => n === 'gemini-flash-latest') ??
       usable.find((n) => /flash$/.test(n) && !/lite/.test(n)) ??
       usable.find((n) => /flash/.test(n)) ??
@@ -211,7 +258,10 @@ async function geminiMedia({
   mimeType,
   prompt,
   system,
-  maxTokens = 1600,
+  // Newer Gemini models reason before answering and charge that reasoning
+  // against the same output budget, so the media budget is generous: a tight
+  // one surfaces as a truncated, unparseable answer rather than as a limit.
+  maxTokens = 2400,
   json,
 }: MediaRequest) {
   const body = {
@@ -230,11 +280,13 @@ async function geminiMedia({
       // Low temperature: this is a reading, not a creative task, and the same
       // input should not produce a different mood on every attempt.
       temperature: 0.2,
-      // Newer Gemini models reason before answering, and that reasoning is
-      // charged against the same output budget. On a tight budget the whole
-      // allowance goes to thinking and the reply comes back truncated — which
-      // surfaces to the user as an unparseable answer rather than as a limit.
-      thinkingConfig: { thinkingBudget: 0 },
+      // No thinkingConfig here. Earlier this set thinkingBudget: 0 to keep the
+      // budget for the answer, but the models "-latest" now points at refuse
+      // to switch thinking off and reject the whole request with a 400 whose
+      // wording the retry net did not recognise. Every camera and voice
+      // check-in failed on that one field while text kept working. Leaving
+      // the model to its default is worth the slightly longer read.
+      //
       // Asking for JSON is more reliable than asking politely in the prompt:
       // it removes markdown fences and preamble at the source.
       ...(json ? { responseMimeType: 'application/json' } : {}),
@@ -244,23 +296,29 @@ async function geminiMedia({
   return geminiCall(body);
 }
 
-async function geminiCall(body: unknown, allowRetry = true): Promise<string> {
+async function geminiCall(body: unknown, allowRetry = true, attempt = 0): Promise<string> {
   const key = process.env.GEMINI_API_KEY!;
   const model = geminiModel();
 
-  const res = await withTimeout(
+  const res = await withTimeout((signal) =>
     fetch(`${GEMINI_BASE}/${model}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify(body),
+      signal,
     }),
   );
 
   // Some models reject generationConfig fields the others accept. Strip the
   // optional ones and try again rather than failing on a config detail.
+  //
+  // The match is deliberately broad. Google's wording for these errors changes
+  // between models ("thinking_budget", "Budget 0 is invalid", "response mime
+  // type is not supported") and a net that only catches one phrasing lets the
+  // next one through as a hard failure.
   if (res.status === 400 && allowRetry) {
     const detail = await res.clone().text().catch(() => '');
-    if (/thinkingConfig|thinkingBudget|responseMimeType/i.test(detail)) {
+    if (/thinking|budget|responseMimeType|response_mime_type|mime type|generationConfig|generation_config/i.test(detail)) {
       console.warn('[zyron] gemini: retrying without optional generationConfig');
       const plain = JSON.parse(JSON.stringify(body)) as {
         generationConfig?: Record<string, unknown>;
@@ -279,7 +337,27 @@ async function geminiCall(body: unknown, allowRetry = true): Promise<string> {
     const discovered = await discoverGeminiModel();
     if (discovered && discovered !== model) {
       resolvedModel = discovered;
-      return geminiCall(body, false);
+      return geminiCall(body, false, attempt);
+    }
+  }
+
+  // 429 and 503 mean "not now", not "no". The per-minute allowance on a free
+  // tier is small enough that two check-ins in a row can trip it, and waiting
+  // a second clears it — so the request is repeated rather than surfaced as a
+  // failure the user has to work around.
+  //
+  // The daily allowance is the exception: it does not come back inside a
+  // sitting, so retrying only makes the user wait before seeing the same
+  // message. `isDailyQuota` tells the two apart from the response body.
+  if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+    const raw = await res.clone().text().catch(() => '');
+    if (!isDailyQuota(raw)) {
+      const wait = retryDelay(res, attempt);
+      console.warn(
+        `[zyron] gemini ${res.status}: retrying in ${wait}ms (attempt ${attempt + 1}/${MAX_RETRIES})`,
+      );
+      await sleep(wait);
+      return geminiCall(body, allowRetry, attempt + 1);
     }
   }
 
@@ -315,6 +393,29 @@ async function geminiCall(body: unknown, allowRetry = true): Promise<string> {
   return text;
 }
 
+/** A per-day allowance is gone for the day; a per-minute one is not. */
+function isDailyQuota(raw: string): boolean {
+  return /per\s*day|PerDay|_per_day|free_tier_requests|GenerateRequestsPerDay/i.test(raw);
+}
+
+/**
+ * How long to wait before asking again.
+ *
+ * Google sends a `RetryInfo` block with its own suggested delay; that is
+ * always better than a guess, so it wins when present. Otherwise the wait
+ * doubles each attempt, with a little randomness so several requests that
+ * failed together do not all come back at the same instant.
+ */
+function retryDelay(res: Response, attempt: number): number {
+  const header = res.headers.get('retry-after');
+  if (header) {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 8_000);
+  }
+  const backoff = BASE_DELAY_MS * 2 ** attempt;
+  return Math.min(backoff + Math.random() * 400, 8_000);
+}
+
 function geminiError(status: number, raw: string) {
   console.error('[zyron] gemini error', status, raw.slice(0, 400));
 
@@ -332,7 +433,20 @@ function geminiError(status: number, raw: string) {
     );
   }
   if (status === 429) {
-    return new ModelError('gemini', 'Gemini rate limit reached. Wait a minute and try again.', status);
+    // Two very different situations behind one status code, and telling the
+    // user the wrong one sends them to wait for something that is not coming.
+    return isDailyQuota(raw)
+      ? new ModelError(
+          'gemini',
+          "Today's free Gemini allowance is used up. Everything else still works — the reading below was written from your own data.",
+          status,
+          true,
+        )
+      : new ModelError(
+          'gemini',
+          'Gemini is busy right now. Give it a few seconds and try again.',
+          status,
+        );
   }
   if (status === 503) {
     return new ModelError(
@@ -382,8 +496,8 @@ async function anthropicVision({ base64, mimeType, prompt, system, maxTokens = 7
   });
 }
 
-async function anthropicCall(body: unknown): Promise<string> {
-  const res = await withTimeout(
+async function anthropicCall(body: unknown, attempt = 0): Promise<string> {
+  const res = await withTimeout((signal) =>
     fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -392,8 +506,16 @@ async function anthropicCall(body: unknown): Promise<string> {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify(body),
+      signal,
     }),
   );
+
+  if ((res.status === 429 || res.status === 529) && attempt < MAX_RETRIES) {
+    const wait = retryDelay(res, attempt);
+    console.warn(`[zyron] anthropic ${res.status}: retrying in ${wait}ms`);
+    await sleep(wait);
+    return anthropicCall(body, attempt + 1);
+  }
 
   if (!res.ok) {
     const raw = await res.text().catch(() => '');
@@ -420,8 +542,56 @@ async function anthropicCall(body: unknown): Promise<string> {
 
 /* ─────────────────────────── Groq ─────────────────────────── */
 
-async function groqText({ system, messages, maxTokens = 900, temperature = 0.4 }: TextRequest) {
-  const res = await withTimeout(
+/**
+ * Same story as Gemini: model names retire, so an explicit GROQ_MODEL wins,
+ * then a sensible default, and if that comes back "not found" the account's
+ * own model list is consulted once and the answer cached.
+ */
+const GROQ_FALLBACK_MODEL = 'llama-3.3-70b-versatile';
+let resolvedGroqModel: string | null = null;
+const groqModel = () => process.env.GROQ_MODEL ?? resolvedGroqModel ?? GROQ_FALLBACK_MODEL;
+
+async function discoverGroqModel(): Promise<string | null> {
+  try {
+    const res = await withTimeout((signal) =>
+      fetch('https://api.groq.com/openai/v1/models', {
+        headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+        signal,
+      }),
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { data?: Array<{ id?: string }> };
+    const ids = (data.data ?? [])
+      .map((m) => m.id ?? '')
+      .filter(Boolean)
+      // Speech, safety and TTS models answer a different question.
+      .filter((id) => !/(whisper|guard|tts|orpheus|playai|embed)/i.test(id));
+
+    const preferred =
+      ids.find((id) => /llama-3\.3-70b/i.test(id)) ??
+      ids.find((id) => /llama.*70b/i.test(id)) ??
+      ids.find((id) => /llama-4|qwen|deepseek|kimi|gpt-oss/i.test(id)) ??
+      ids.find((id) => /llama/i.test(id)) ??
+      ids[0];
+
+    if (preferred) {
+      console.warn(`[zyron] groq: falling back to "${preferred}"`);
+      return preferred;
+    }
+    return null;
+  } catch (error) {
+    console.error('[zyron] groq model discovery failed', error);
+    return null;
+  }
+}
+
+async function groqText(
+  { system, messages, maxTokens = 900, temperature = 0.4 }: TextRequest,
+  attempt = 0,
+  allowDiscovery = true,
+): Promise<string> {
+  const model = groqModel();
+  const res = await withTimeout((signal) =>
     fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -429,7 +599,7 @@ async function groqText({ system, messages, maxTokens = 900, temperature = 0.4 }
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile',
+        model,
         max_tokens: maxTokens,
         temperature,
         messages: [
@@ -437,12 +607,48 @@ async function groqText({ system, messages, maxTokens = 900, temperature = 0.4 }
           ...messages,
         ],
       }),
+      signal,
     }),
   );
+
+  // A retired model comes back as 404, or as 400 with "model … does not exist"
+  // or "decommissioned". Either way: ask what is live and try once more.
+  if ((res.status === 404 || res.status === 400) && allowDiscovery && !process.env.GROQ_MODEL) {
+    const raw = await res.clone().text().catch(() => '');
+    if (res.status === 404 || /model|decommission|deprecat/i.test(raw)) {
+      const discovered = await discoverGroqModel();
+      if (discovered && discovered !== model) {
+        resolvedGroqModel = discovered;
+        return groqText({ system, messages, maxTokens, temperature }, attempt, false);
+      }
+    }
+  }
+
+  if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+    const wait = retryDelay(res, attempt);
+    console.warn(`[zyron] groq ${res.status}: retrying in ${wait}ms`);
+    await sleep(wait);
+    return groqText({ system, messages, maxTokens, temperature }, attempt + 1, allowDiscovery);
+  }
 
   if (!res.ok) {
     const raw = await res.text().catch(() => '');
     console.error('[zyron] groq error', res.status, raw.slice(0, 400));
+    if (res.status === 401) throw new ModelError('groq', 'That Groq key is not valid. Check GROQ_API_KEY.', 401);
+    if (res.status === 429) {
+      const daily = /per day|daily|tokens per day|TPD|RPD/i.test(raw);
+      throw new ModelError(
+        'groq',
+        daily
+          ? "Today's free Groq allowance is used up."
+          : 'Groq is busy right now. Give it a few seconds and try again.',
+        429,
+        daily,
+      );
+    }
+    if (res.status === 404) {
+      throw new ModelError('groq', 'No usable Groq model was found. Set GROQ_MODEL in .env.local.', 404);
+    }
     throw new ModelError('groq', 'Groq could not answer right now.', res.status);
   }
 
@@ -455,15 +661,21 @@ async function groqText({ system, messages, maxTokens = 900, temperature = 0.4 }
 /* ─────────────────────────── Utilities ─────────────────────────── */
 
 /**
- * A model endpoint that never answers must not hold a request open. Explicit
- * controller rather than AbortSignal.timeout, which is not on every runtime
- * this could be deployed to.
+ * A model endpoint that never answers must not hold a request open.
+ *
+ * The previous version built an AbortController and then never handed its
+ * signal to `fetch`, so the timer fired into nothing and a hung request stayed
+ * open until the platform gave up on it. The signal is now passed in, which
+ * means callers receive the factory rather than an already-started promise.
+ *
+ * Explicit controller rather than AbortSignal.timeout, which is not on every
+ * runtime this could be deployed to.
  */
-async function withTimeout(promise: Promise<Response>): Promise<Response> {
+async function withTimeout(make: (signal: AbortSignal) => Promise<Response>): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    return await promise;
+    return await make(controller.signal);
   } finally {
     clearTimeout(timer);
   }
