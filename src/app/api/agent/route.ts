@@ -98,14 +98,20 @@ export async function POST(req: Request) {
     );
 
     if (resolved.kind === 'found') {
-      await rememberContact(pending.subject, answer).catch(() => undefined);
+      // The user may have answered with a number ("2") or a fragment of an
+      // address. The replayed command must carry the resolved address, not
+      // the answer as typed — "send email to 2" resolves to nobody.
+      const address = resolved.label.match(/<([^>]+)>/)?.[1] ?? resolved.label;
+      if (pending.subject) await rememberContact(pending.subject, address).catch(() => undefined);
       // Replay the original instruction, now addressed properly.
-      effectiveMessage = pending.originalMessage.replace(
-        new RegExp(pending.subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
-        answer,
-      );
-      if (!effectiveMessage.includes(answer)) {
-        effectiveMessage = `${pending.originalMessage} (send it to ${answer})`;
+      effectiveMessage = pending.subject
+        ? pending.originalMessage.replace(
+            new RegExp(pending.subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+            address,
+          )
+        : `${pending.originalMessage} (send it to ${address})`;
+      if (!effectiveMessage.includes(address)) {
+        effectiveMessage = `${pending.originalMessage} (send it to ${address})`;
       }
       answeredPending = true;
       await clearPending().catch(() => undefined);

@@ -34,6 +34,8 @@ export interface Pending {
   subject: string;
   /** The command that triggered the question, replayed once answered. */
   originalMessage: string;
+  /** recipient: the choices offered when several people share the name. */
+  options?: string[];
   askedAt: number;
 }
 
@@ -111,6 +113,8 @@ export async function clearPending(): Promise<void> {
 export function looksLikeAnswer(message: string): boolean {
   const trimmed = message.trim();
   if (/[\w.+-]+@[\w-]+\.[\w.]+/.test(trimmed)) return true;
+  // A pick from a numbered list: "2", "2nd", "the first one", "dusra".
+  if (/^(?:the\s+)?(?:\d{1,2}|1st|2nd|3rd|\dth|first|second|third|fourth|fifth|pehla|pehli|dusra|doosra|dusri|teesra|teesri)(?:\s+(?:one|wala|wali))?$/i.test(trimmed)) return true;
   // A bare handle or name — "irtizamazhar", "Irtiza Mazhar".
   return trimmed.split(/\s+/).length <= 3 && /^[\p{L}][\p{L}\d.'_-]{1,40}(\s+\S+){0,2}$/u.test(trimmed);
 }

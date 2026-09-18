@@ -15,7 +15,8 @@ import {
   upcomingEvents,
 } from '@/lib/connectors/google';
 import { describeModules, extractRecipient, routeIntent, type RouteResult } from './router';
-import { clearPending, setPending } from './pending';
+import { clearPending, getPending, setPending } from './pending';
+import { lookupContact, rememberContact as rememberKnownContact } from './contacts';
 import {
   DEFAULT_USER as DOCUMENT_USER,
   getDocumentStore,
@@ -158,7 +159,7 @@ ${
 
 export type Resolved =
   | { kind: 'found'; label: string }
-  | { kind: 'ask'; question: string }
+  | { kind: 'ask'; question: string; options?: string[] }
   | { kind: 'none' };
 
 /**
@@ -169,17 +170,56 @@ export type Resolved =
  * address can be found, the flow stops and asks. Sending to a guessed address
  * is the one action here that cannot be taken back.
  */
+const ORDINALS: Record<string, number> = {
+  '1st': 1, first: 1, one: 1, pehla: 1, pehli: 1,
+  '2nd': 2, second: 2, two: 2, dusra: 2, doosra: 2, dusri: 2,
+  '3rd': 3, third: 3, three: 3, teesra: 3, teesri: 3,
+  '4th': 4, fourth: 4, '5th': 5, fifth: 5,
+};
+
+/** "2", "2nd", "the second one", "israr23" -> one of the offered options, or null. */
+function pickOption(answer: string, options: string[]): string | null {
+  const a = answer
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:send a message to\s+)?(?:the\s+)?/, '')
+    .replace(/\s+(?:one|wala|wali|ko)$/, '')
+    .trim();
+  const idx = ORDINALS[a] ?? (/^\d{1,2}$/.test(a) ? Number(a) : NaN);
+  if (Number.isInteger(idx) && idx >= 1 && idx <= options.length) return options[idx - 1];
+  const hits = options.filter((o) => o.toLowerCase().includes(a));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/**
+ * Turns "send email to israr" into a real address.
+ *
+ * Order matters: a pick from a list ZYRON just offered, then a typed address,
+ * then the contact memory (asked once, never again), then the user's own mail
+ * history. One match sends; several matches ask, with numbers.
+ */
 export async function resolveRecipient(message: string): Promise<Resolved> {
+  const pending = await getPending().catch(() => null);
+
+  if (pending?.kind === 'recipient' && pending.options?.length) {
+    const picked = pickOption(message, pending.options);
+    if (picked) {
+      if (pending.subject) await rememberKnownContact(pending.subject, picked, picked.replace(/\s*<.*$/, '')).catch(() => undefined);
+      return { kind: 'found', label: picked };
+    }
+  }
+
   const name = extractRecipient(message);
   if (!name) return { kind: 'none' };
 
-  // An address typed out is already the answer. Asking Google to confirm it
-  // would fail for anyone who has not connected an account, over a lookup that
-  // was never needed.
   if (/^[\w.+-]+@[\w-]+\.[\w.]+$/.test(name)) {
-    await rememberContact(name, name).catch(() => undefined);
+    // A typed address answers "what is X's email?" for good.
+    if (pending?.kind === 'recipient' && pending.subject) await rememberKnownContact(pending.subject, name).catch(() => undefined);
     return { kind: 'found', label: name };
   }
+
+  const known = await lookupContact(name).catch(() => null);
+  if (known) return { kind: 'found', label: `${known.name || name} <${known.email}>` };
 
   let connected = false;
   try {
@@ -187,7 +227,6 @@ export async function resolveRecipient(message: string): Promise<Resolved> {
   } catch {
     connected = false;
   }
-
   if (!connected) {
     return {
       kind: 'ask',
@@ -199,7 +238,6 @@ export async function resolveRecipient(message: string): Promise<Resolved> {
     console.error('[zyron] contact lookup failed', error);
     return [];
   });
-
   if (matches.length === 0) {
     return {
       kind: 'ask',
@@ -208,22 +246,21 @@ export async function resolveRecipient(message: string): Promise<Resolved> {
   }
 
   const best = matches[0];
-
-  // Several people share a first name often enough that picking silently is a
-  // real risk. Two or more strong matches go back to the user.
   const contested = matches.filter((m) => m.seen >= best.seen * 0.6);
   if (contested.length > 1) {
-    const options = contested.map((m) => `${m.name || m.email} <${m.email}>`).join(', ');
+    const options = contested.slice(0, 5).map((m) => `${m.name || name} <${m.email}>`);
+    const list = options.map((o, i) => `${i + 1}. ${o}`).join('\n');
     return {
       kind: 'ask',
-      question: `More than one ${name} in your mail: ${options}. Which one?`,
+      question: `More than one ${name} in your mail:\n${list}\nWhich one? Say the number, or part of the address.`,
+      options,
     };
   }
 
-  await rememberContact(name, best.email).catch(() => undefined);
-  return { kind: 'found', label: `${best.name || name} <${best.email}>` };
+  const label = `${best.name || name} <${best.email}>`;
+  await rememberKnownContact(name, best.email, best.name || name).catch(() => undefined);
+  return { kind: 'found', label };
 }
-
 /** Modules whose answer changes if it can see the real inbox and calendar. */
 const DATA_HUNGRY = new Set(['BRF', 'DSR', 'CLT', 'PSG', 'CMS', 'FIN', 'VIP', 'DEL']);
 
@@ -392,7 +429,7 @@ export async function think(
       await setPending({
         kind: 'recipient',
         subject: extractRecipient(message) ?? '',
-        originalMessage: message,
+        originalMessage: message, options: resolved.options,
       }).catch(() => undefined);
 
       return {
@@ -895,7 +932,7 @@ function messageContent(input: string): string {
   // message. Roman Urdu puts the marker in a different place to English, so
   // both orders are listed rather than assuming one grammar.
   const marker = cleaned.match(
-    /\b(?:and\s+)?(?:saying|say|tell(?:\s+(?:him|her|them))?|that|inform(?:\s+(?:him|her|them))?|(?:karo|kroo|kro|kru|kardo|kar\s*do|bol\s*do|bolo|keh\s*do|kaho|kehna|bata\s*do|batao|bhejo)\s+(?:ke|k|kay)\b|karo|kroo|kro|kru|kardo|bolo|batao|bhejo)\s*[:,]?\s+/i,
+    /\b(?:(?:and|nd|n|aur|phir|then)\s+)?(?:saying|say|tell(?:\s+(?:him|her|them))?|that|inform(?:\s+(?:him|her|them))?|(?:karo|kroo|kro|kru|kardo|kar\s*do|bol\s*do|bolo|keh\s*do|kaho|kehna|bata\s*do|batao|bhejo)\s+(?:ke|k|kay)\b|karo|kroo|kro|kru|kardo|bolo|batao|bhejo)\s*[:,]?\s+/i,
   );
   if (marker && marker.index !== undefined) {
     // "saying tell zain how are you" — the user restated the instruction
@@ -905,7 +942,7 @@ function messageContent(input: string): string {
       .slice(marker.index + marker[0].length)
       .replace(/^(?:tell|inform|ask|say to|bolo|batao|kaho)\s+[\p{L}][\p{L}.'-]*\s+(?:that\s+|ke\s+|k\s+)?/iu, '');
     const said = polish(raw);
-    if (said.replace(/[^\p{L}]/gu, '').length >= 3) return said;
+    if (said.replace(/[^\p{L}]/gu, '').length >= 2) return said;
   }
 
   // "reply to Alex about the invoice" names a topic, not a sentence to send.

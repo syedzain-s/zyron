@@ -77,11 +77,11 @@ const SIGNATURES: Record<string, string[]> = {
 
 /** Verbs that mean something happens outside ZYRON. */
 const EFFECT_VERBS: Array<{ verb: string; effect: string }> = [
-  { verb: 'send', effect: 'send a message' },
-  { verb: 'reply', effect: 'send a reply' },
-  { verb: 'message', effect: 'send a message' },
   { verb: 'email', effect: 'send an email' },
   { verb: 'mail', effect: 'send an email' },
+  { verb: 'reply', effect: 'send a reply' },
+  { verb: 'send', effect: 'send a message' },
+  { verb: 'message', effect: 'send a message' },
   { verb: 'msg', effect: 'send a message' },
   { verb: 'dm', effect: 'send a message' },
   { verb: 'tell', effect: 'send a message' },
@@ -319,6 +319,7 @@ const STOP_WORDS = new Set([
   'sorry', 'thanks', 'shukriya', 'karo', 'kar', 'karna', 'kardo', 'do', 'de',
   'dena', 'bolo', 'batao', 'btao', 'main', 'mai', 'hun', 'hoon', 'kroo', 'kro', 'kru',
   'bhejo', 'bhej', 'bhejna', 'likho', 'kaho', 'kehna', 'how', 'what', 'when', 'where',
+  'nd', 'n', 'aur', 'phir', 'then', 'also', 'bhi', 'aur', 'sath', 'saath',
   // Nouns that follow a send verb but name a thing, not a person.
   'email', 'mail', 'message', 'msg', 'text', 'note', 'reply', 'draft', 'brief',
   'briefing', 'report', 'summary', 'update', 'invite', 'pdf', 'document', 'file',
