@@ -5,11 +5,25 @@ import {
   providerLabel,
   textProvider,
 } from '@/lib/agent/providers';
-import { findContact, isConnected, recentMail, upcomingEvents } from '@/lib/connectors/google';
+import {
+  cleanMailText,
+  findContact,
+  isConnected,
+  readableSender,
+  recentMail,
+  rememberContact,
+  upcomingEvents,
+} from '@/lib/connectors/google';
 import { describeModules, extractRecipient, routeIntent, type RouteResult } from './router';
 import { clearPending, setPending } from './pending';
+import {
+  DEFAULT_USER as DOCUMENT_USER,
+  getDocumentStore,
+  type DocumentSummary,
+} from '@/lib/db/documents';
 
 const IMPORTANT_MAIL_WORDS = /urgent|important|action required|deadline|due|invoice|payment|interview|offer|contract|approval|tomorrow|today/i;
+const PRINCIPAL_NAME = process.env.ZYRON_USER_NAME?.trim().split(/\s+/)[0] || 'Zaynix';
 
 export interface BrainReply {
   body: string;
@@ -21,6 +35,7 @@ export interface BrainReply {
     target: string;
     payload: string;
     risk: RouteResult['risk'];
+    attachment?: { documentId: string; filename: string; mimeType: string };
   };
   mode: 'model' | 'simulation';
   /** True when the answer was written against the user's real mail and calendar. */
@@ -67,6 +82,8 @@ export function buildSystemPrompt(route: RouteResult, data: DataState): string {
 
 They have said something conversational — a greeting, a thank you, or a question about what you are.
 
+Always answer in English, even when the user speaks Roman Urdu or another language. When it feels natural, address the user as ${PRINCIPAL_NAME}.
+
 Open by returning the greeting in one short line. Then reply in two or three short sentences. Warm but not chatty, and never servile. Then offer two or three specific things you could do right now, drawn from this list and phrased as the user would say them:
 
   "Brief me on today"                    — your calendar and inbox, read and prioritised
@@ -90,12 +107,10 @@ ${data.context}
 Rules for real data: never invent a meeting, a sender or an amount. If something is not in the data above, say it is not there rather than filling the gap. Quote real times and real names.`;
 
       case 'connected-no-source':
-        return `THE USER'S GOOGLE ACCOUNT IS CONNECTED, but this module reads sources that are not wired in yet${
+        return `THE USER'S GOOGLE ACCOUNT IS CONNECTED, but this module needs a source that is not wired in yet${
           primary ? ` (${primary.inputs.join(', ')})` : ''
         }.
-So: produce a realistic worked example so the shape of the output is clear. Invent plausible details.
-Then close with exactly this line, on its own, and nothing after it:
-Simulated — this module's data source is not connected yet.`;
+Do not invent meetings, mail, names, amounts or deadlines. Say exactly what source is missing and what the user can connect next.`;
 
       case 'unreachable':
         return `THE USER'S GOOGLE ACCOUNT IS CONNECTED BUT COULD NOT BE REACHED ON THIS TURN.
@@ -104,9 +119,7 @@ Do NOT invent any meetings, mail, names or amounts. Say plainly, in one or two s
       case 'not-connected':
       default:
         return `NO DATA SOURCES ARE CONNECTED YET.
-So: produce a realistic worked example rather than refusing. Invent plausible meetings, senders, amounts and deadlines so the shape of the output is clear.
-Then close with exactly this line, on its own, and nothing after it:
-Simulated — no data sources connected yet.`;
+      Do not invent a calendar, inbox, sender, amount or deadline. Tell the user to connect Google from the console header. For text generation, a GEMINI_API_KEY or GROQ_API_KEY can be used, but those keys do not connect Gmail or Calendar.`;
     }
   })();
 
@@ -131,8 +144,8 @@ HOW TO ANSWER
 - Under 160 words unless genuine analysis was asked for.
 - No bullet list longer than five items. No headings for short answers.
 - Write like a senior chief of staff briefing a principal: direct, unhurried, no flattery, no emoji.
-- A briefing reports what exists; it does not plan the day. If the calendar is empty, say "Nothing scheduled" in one line and move on. Never invent time blocks, breaks, lunch, "deep-work" slots or a 9-to-5 timetable — those are not in the data and the user will read them as real.
-- For mail, lead with what needs the user's attention (unread, important, anything asking for a reply or a decision), name the sender and the subject, and skip newsletters and automated notices unless asked.
+- A briefing reports what exists; it does not plan the day. If the calendar is empty, say "Nothing scheduled" in one line and move on. Never invent time blocks, breaks, lunch, "deep-work" slots or a 9-to-5 timetable.
+- For mail, lead with what needs the user's attention (unread, important, anything asking for a reply or a decision), name the sender and subject, and skip newsletters and automated notices unless asked.
 
 ${dataSection}
 
@@ -164,6 +177,7 @@ export async function resolveRecipient(message: string): Promise<Resolved> {
   // would fail for anyone who has not connected an account, over a lookup that
   // was never needed.
   if (/^[\w.+-]+@[\w-]+\.[\w.]+$/.test(name)) {
+    await rememberContact(name, name).catch(() => undefined);
     return { kind: 'found', label: name };
   }
 
@@ -206,11 +220,12 @@ export async function resolveRecipient(message: string): Promise<Resolved> {
     };
   }
 
+  await rememberContact(name, best.email).catch(() => undefined);
   return { kind: 'found', label: `${best.name || name} <${best.email}>` };
 }
 
 /** Modules whose answer changes if it can see the real inbox and calendar. */
-const DATA_HUNGRY = new Set(['BRF', 'DSR', 'CLT', 'PSG', 'CMS', 'VIP', 'DEL']);
+const DATA_HUNGRY = new Set(['BRF', 'DSR', 'CLT', 'PSG', 'CMS', 'FIN', 'VIP', 'DEL']);
 
 /**
  * Pulls the user's own mail and calendar when the routed module would actually
@@ -305,8 +320,8 @@ export async function gatherData(route: RouteResult): Promise<DataState> {
         .filter(Boolean)
         .map((flag) => `[${flag}] `)
         .join('');
-      lines.push(`  ${flags}${m.from} — ${m.subject}`);
-      if (m.snippet) lines.push(`      ${m.snippet}`);
+      lines.push(`  ${flags}${cleanMailText(m.subject, 100)} — ${readableSender(m.from)}`);
+      if (m.snippet) lines.push(`      ${cleanMailText(m.snippet)}`);
     }
   }
 
@@ -329,6 +344,38 @@ export async function think(
   history: Array<{ role: 'user' | 'assistant'; content: string }> = [],
 ): Promise<BrainReply> {
   const base = simulate(message, route);
+
+  if (route.modules[0] === 'DOC' && /\b(?:list|show|which|what|stored|saved)\b[\s\S]*\b(?:pdf|document|file|contract)s?\b/i.test(message)) {
+    return storedDocumentsResponse(route);
+  }
+
+  if (base.approval && route.effects.some((effect) => /message|reply|email|text/.test(effect))) {
+    const documents = await getDocumentStore()
+      .list(DOCUMENT_USER, 30)
+      .catch(() => [] as DocumentSummary[]);
+    const selected = selectDocument(message, documents);
+    if (mentionsDocument(message) && !selected) {
+      return {
+        body: documents.length > 0
+          ? 'I found the stored contract record, but its original PDF bytes are unavailable. Upload the PDF again before I send it; I will not send a text-only email by mistake.'
+          : 'I cannot find a stored PDF to attach. Upload the contract first, then ask me to send it.',
+        routedTo: route.modules,
+        mode: 'simulation',
+        grounded: true,
+      };
+    }
+    if (selected) {
+      base.approval.attachment = {
+        documentId: selected.id,
+        filename: selected.title.endsWith('.pdf') ? selected.title : `${selected.title}.pdf`,
+        mimeType: selected.kind === 'pdf' ? 'application/pdf' : 'text/plain',
+      };
+    }
+  }
+
+  if (route.modules[0] === 'BRF' && /\b(show|what did|reply from|response from)\b/i.test(message)) {
+    return mailResponse(message, route);
+  }
 
   // Before anything is staged for approval, work out who it is actually going
   // to. An approval card addressed to "Unspecified recipient" is not something
@@ -361,20 +408,22 @@ export async function think(
       base.approval.payload = draftEmail(message, resolved.label);
       await clearPending().catch(() => undefined);
     }
-    if (resolved.kind === 'none') {
-      // No name in the command at all. A draft "to Unspecified recipient" is
-      // not something anyone can approve, so nothing is staged — ask instead.
-      await setPending({ kind: 'recipient', subject: '', originalMessage: message }).catch(
-        () => undefined,
-      );
-      return {
-        body: 'Who should this go to? Give me a name from your mail or an address and I will stage the draft.',
-        routedTo: route.modules,
-        mode: 'simulation',
-      };
-    }
   }
 
+  // No name in the command at all ("send email"). A draft "to Unspecified
+  // recipient" is not something anyone can approve, so nothing is staged.
+  if (
+    base.approval &&
+    base.approval.target === UNSPECIFIED &&
+    route.effects.some((e) => /message|reply|email|invite|text/.test(e))
+  ) {
+    await setPending({ kind: 'recipient', subject: '', originalMessage: message }).catch(() => undefined);
+    return {
+      body: 'Who should this go to? Give me a name from your mail or an address and I will stage the draft.',
+      routedTo: route.modules,
+      mode: 'simulation',
+    };
+  }
   // A greeting is answered from here, instantly, with no model call.
   //
   // Two reasons. It felt slow — several seconds of spinner to be told hello.
@@ -400,12 +449,52 @@ export async function think(
     };
   }
 
+  if (data.kind === 'not-connected' && route.modules.some((code) => DATA_HUNGRY.has(code))) {
+    return {
+      body: 'Google is not connected, so I cannot read your real calendar or inbox yet. Connect Google from the console header and ask again. I will not invent today\'s events or email priorities.',
+      routedTo: route.modules,
+      mode: 'simulation',
+      grounded: false,
+      approval: base.approval,
+    };
+  }
+
   const provider = textProvider();
   const label = providerLabel(provider);
 
   // A missing model must not hide connected Google data. The deterministic
   // fallback can still show the live inbox and calendar without prose
   // generation.
+  if (route.modules[0] === 'FIN' && data.kind === 'connected-no-source') {
+    return {
+      body: 'I can check your connected Gmail for invoices, receipts, and recurring-charge notices. Bank and card feeds are not connected yet, so I cannot truthfully confirm duplicate payments. Connect a financial feed or ask me to scan your email for subscription charges.',
+      routedTo: route.modules,
+      mode: 'simulation',
+      grounded: false,
+      approval: base.approval,
+    };
+  }
+
+  if (route.modules[0] === 'FIN' && data.kind === 'grounded') {
+    const matches = data.context
+      .split('\n')
+      .filter((line) => /subscription|invoice|receipt|charge|billing|payment|renewal/i.test(line))
+      .slice(0, 8);
+    return {
+      body: [
+        'I checked your connected Gmail for payment-related messages.',
+        '',
+        ...(matches.length
+          ? matches.map((line) => line.replace(/^\s+/, ''))
+          : ['No matching subscription or billing email was found.']),
+      ].join('\n'),
+      routedTo: route.modules,
+      mode: 'simulation',
+      grounded: true,
+      approval: base.approval,
+    };
+  }
+
   if (provider === 'none') {
     return data.kind === 'grounded'
       ? groundedFallback(data.context, route, 'Live account data shown; no model provider is configured.', base.approval)
@@ -421,7 +510,9 @@ export async function think(
     });
 
     return {
-      body: text,
+      body: base.approval
+        ? `Draft ready for approval. I found ${base.approval.target} and prepared the message below.`
+        : text,
       routedTo: route.modules,
       // The approval card is still built by the router, never by the model.
       approval: base.approval,
@@ -443,19 +534,79 @@ export async function think(
   }
 }
 
+async function mailResponse(message: string, route: RouteResult): Promise<BrainReply> {
+  const data = await recentMail(50).catch((error) => {
+    console.error('[zyron] response lookup failed', error);
+    return null;
+  });
+
+  if (!data) {
+    return {
+      body: 'I could not read Gmail right now. Reconnect Google or try again in a moment.',
+      routedTo: route.modules,
+      mode: 'simulation',
+      grounded: false,
+    };
+  }
+
+  const words = message
+    .toLowerCase()
+    .replace(/\b(show|the|response|reply|from|of|what|did|he|she|say)\b/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 2);
+  const matches = data.filter((mail) => {
+    const haystack = `${mail.from} ${mail.subject} ${mail.snippet}`.toLowerCase();
+    return words.length === 0 || words.some((word) => haystack.includes(word));
+  }).slice(0, 5);
+
+  if (matches.length === 0) {
+    return {
+      body: 'I could not find a matching reply in your recent Gmail inbox.',
+      routedTo: route.modules,
+      mode: 'simulation',
+      grounded: true,
+    };
+  }
+
+  const lines = ['Here is the response I found:', ''];
+  for (const [index, mail] of matches.entries()) {
+    lines.push(`${index + 1}. ${cleanMailText(mail.subject, 100)}`);
+    lines.push(`   From: ${readableSender(mail.from)}`);
+    if (mail.receivedAt) lines.push(`   Received: ${new Date(mail.receivedAt).toLocaleString('en-GB')}`);
+    if (mail.snippet) lines.push(`   ${cleanMailText(mail.snippet, 500)}`);
+    lines.push('');
+  }
+
+  return { body: lines.join('\n').trim(), routedTo: route.modules, mode: 'simulation', grounded: true };
+}
+
 function groundedFallback(
   context: string,
   route: RouteResult,
   reason: string,
   approval?: BrainReply['approval'],
 ): BrainReply {
-  const lines = context
-    .split('\n')
-    .filter((line) => !line.startsWith('Today is '))
-    .map((line) => line.replace(/^  /, ''));
+  const source = context.split('\n').filter((line) => !line.startsWith('Today is '));
+  const calendar = source.filter((line) => /^(CALENDAR|  (?:All day|\d{2}:\d{2}))/i.test(line));
+  const mailStart = source.findIndex((line) => line.startsWith('RECENT MAIL'));
+  const mail = mailStart >= 0 ? source.slice(mailStart + 1) : [];
+  const mailItems = mail.filter((line) => line.trim() && !line.startsWith('      '));
+  const lines = [
+    'Here is your live briefing.',
+    '',
+    'Calendar',
+    ...(calendar.length ? calendar.map((line) => line.replace(/^  /, '')) : ['Nothing scheduled.']),
+    '',
+    'Priority email',
+    ...(mailItems.length ? mailItems.map((line) => line.replace(/^  /, '')) : ['No priority email found.']),
+  ];
+
+  for (const line of mail) {
+    if (line.startsWith('      ') && lines.length < 16) lines.push(`  ${line.trim()}`);
+  }
 
   return {
-    body: [`Live briefing from your connected Google account.`, '', ...lines, '', reason].join('\n'),
+    body: lines.join('\n'),
     routedTo: route.modules,
     mode: 'simulation',
     grounded: true,
@@ -478,6 +629,21 @@ export function simulate(
   // The conversational path has no module, so it needs its own written reply
   // rather than crashing on a module lookup that will not resolve.
   if (route.general || route.modules.length === 0) {
+    const trimmed = input.trim().toLowerCase();
+    if (/^(ok|okay|acha|theek|cool|nice|great)$/.test(trimmed)) {
+      return {
+        body: 'Yes. What would you like me to do now?',
+        routedTo: [],
+        mode: 'simulation',
+      };
+    }
+    if (/\b(?:kya haal|kaise ho|how are you|how r u)\b/i.test(trimmed)) {
+      return {
+        body: `I'm good, ${PRINCIPAL_NAME}. What would you like me to handle?`,
+        routedTo: [],
+        mode: 'simulation',
+      };
+    }
     return {
       body: [
         `${greeting()}. I am here — what do you need?`,
@@ -562,16 +728,74 @@ function greeting() {
 
 /* ─────────────────────── The outgoing draft ─────────────────────── */
 
+async function storedDocumentsResponse(route: RouteResult): Promise<BrainReply> {
+  const documents = await getDocumentStore().list(DOCUMENT_USER, 30).catch((error) => {
+    console.error('[zyron] document list failed', error);
+    return null;
+  });
+  if (!documents) {
+    return {
+      body: 'I could not reach the stored PDF library just now. Try again in a moment.',
+      routedTo: route.modules,
+      mode: 'simulation',
+      grounded: false,
+    };
+  }
+  if (documents.length === 0) {
+    return {
+      body: 'There are no stored PDFs yet. Upload a contract and I will analyse and keep it in the document library.',
+      routedTo: route.modules,
+      mode: 'simulation',
+      grounded: true,
+    };
+  }
+  const uniqueDocuments = documents.filter((document, index, all) => {
+    const key = document.title.toLowerCase().replace(/\.[^.]+$/, '').replace(/\s+/g, ' ').trim();
+    return all.findIndex((candidate) =>
+      candidate.title.toLowerCase().replace(/\.[^.]+$/, '').replace(/\s+/g, ' ').trim() === key,
+    ) === index;
+  });
+  const lines = [`I found ${uniqueDocuments.length} stored document${uniqueDocuments.length === 1 ? '' : 's'}:`];
+  for (const [index, document] of uniqueDocuments.entries()) {
+    lines.push(`${index + 1}. ${document.title} · ${document.pages} pages · risk ${document.report.riskScore}/100`);
+  }
+  lines.push('', 'Use one distinctive word from a title when you want me to attach it to an approved email.');
+  return { body: lines.join('\n'), routedTo: route.modules, mode: 'simulation', grounded: true };
+}
+
+function selectDocument(message: string, documents: DocumentSummary[]) {
+  const available = documents.filter((document) => document.kind === 'pdf' && document.bytes > 0);
+  const words = new Set(
+    message.toLowerCase().match(/[\p{L}\d][\p{L}\d_-]{1,40}/gu) ?? [],
+  );
+  const ignored = new Set([
+    'send', 'email', 'mail', 'message', 'text', 'reply', 'tell', 'inform', 'to', 'ko',
+    'bhej', 'bhejo', 'bhejna', 'pdf', 'document', 'file', 'please', 'and',
+  ]);
+  const named = available.find((document) => {
+    const titleWords = document.title
+      .toLowerCase()
+      .replace(/\.[^.]+$/, '')
+      .match(/[\p{L}\d][\p{L}\d_-]{1,40}/gu) ?? [];
+    return titleWords.some((word) => !ignored.has(word) && words.has(word));
+  });
+
+  if (named) return named;
+
+  // "PDF Israr ko bhejo" identifies the recipient, not the document. If the
+  // library has exactly one document, selecting it is deterministic and lets
+  // the user use the natural short command. Multiple documents require a
+  // title word so we never attach the wrong contract silently.
+  const mentionsDocument = /\b(?:pdf|document|file|contract)\b/i.test(message);
+  return mentionsDocument && available.length === 1 ? available[0] : undefined;
+}
+
+function mentionsDocument(message: string): boolean {
+  return /\b(?:pdf|document|file|contract)\b/i.test(message);
+}
+
 /**
  * Builds the message that will actually be sent.
- *
- * This is rule-based on purpose, and it is worth being clear about why. The
- * model writes the console reply; it does not write the payload. So a model
- * outage degrades the prose in the chat window and nothing else — the text
- * that leaves the system is produced by code the reviewer can read, and it is
- * identical whether or not the network was up when it was written.
- *
- * The earlier version pasted the raw command into a fixed scheduling sentence,
  * which is how "I am busy right now" came out as "let me know if the timing
  * does not work and I will move it". It now separates three things: who it is
  * addressed to, what the user actually asked to say, and the wrapper around it.
@@ -601,7 +825,10 @@ function firstName(target: string): string | null {
   if (!target || target === UNSPECIFIED) return null;
 
   const label = target.replace(/<[^>]*>/, '').trim();
-  const source = label || target.split('@')[0].replace(/[._-]+/g, ' ');
+  const source = (label.includes('@') ? label.split('@')[0] : label || target.split('@')[0])
+    .replace(/[._-]+/g, ' ')
+    .replace(/\d+$/, '')
+    .trim();
   const first = source.split(/\s+/)[0]?.replace(/[^\p{L}'-]/gu, '');
 
   if (!first || first.length < 2) return null;
@@ -617,6 +844,13 @@ function firstName(target: string): string | null {
  * returns false.
  */
 export function hasBody(input: string): boolean {
+  if (
+    /\b(?:tomorrow|tomorow|kal|next week)\b/i.test(input) &&
+    /\b(?:send|email|mail|message|reply|bhej(?:o|na)?|karo|kar dena)\b/i.test(input) &&
+    !/\b(?:saying|say|that|keh do|bolo|batao|ke)\b/i.test(input)
+  ) {
+    return false;
+  }
   return messageContent(input) !== PLACEHOLDER_BODY;
 }
 
@@ -632,6 +866,30 @@ const PLACEHOLDER_BODY = 'Following up on this — could you let me know where t
  */
 function messageContent(input: string): string {
   const cleaned = input.replace(/\s+/g, ' ').trim();
+
+  const contactCommand = cleaned.match(
+    /^(?:please\s+)?(?:send|email|mail|message|text)\s+(\+?\d[\d\s().-]{6,})\s+([\p{L}][\p{L}.'-]*)\s+(?:to|ko|for)\s+.+$/iu,
+  );
+  if (contactCommand?.[1] && contactCommand[2]) {
+    return formatContactInfoParts(contactCommand[1], contactCommand[2]);
+  }
+
+  // Natural commands often put the message before the destination:
+  // "send this contact info to Israr". Keep that message intact.
+  const destination = extractRecipient(cleaned);
+  if (destination) {
+    const escaped = destination.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const beforeDestination = cleaned.match(
+      new RegExp(`^(?:please\\s+)?(?:send|email|mail|message|msg|text|tell)\\s+(.+?)\\s+(?:to|ko|for)\\s+${escaped}\\s*$`, 'iu'),
+    );
+    if (beforeDestination?.[1]) {
+      const directBody =
+        formatContactInfo(beforeDestination[1]) ??
+        formatAddressInfo(beforeDestination[1]) ??
+        polish(beforeDestination[1]);
+      if (directBody.replace(/[^\p{L}]/gu, '').length >= 3) return directBody;
+    }
+  }
 
   // "say", "that", "keh do", "batao ke" — everything after one of these is the
   // message. Roman Urdu puts the marker in a different place to English, so
@@ -707,12 +965,55 @@ function polish(text: string): string {
   return t;
 }
 
+function formatContactInfo(text: string): string | null {
+  const match = text.trim().match(
+    /^(?:contact\s+)?(\+?\d[\d\s().-]{6,})(?:\s+(?:name\s+)?([\p{L}][\p{L}.'-]*(?:\s+[\p{L}][\p{L}.'-]*)*))?$/iu,
+  );
+  if (!match?.[1] || !match[2]) return null;
+
+  return formatContactInfoParts(match[1], match[2]);
+}
+
+function formatContactInfoParts(rawPhone: string, rawName: string): string {
+  const phone = rawPhone.replace(/[\s().-]+/g, '').trim();
+  const name = rawName
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+  return `Contact information:\nName: ${name}\nPhone: ${phone}`;
+}
+
+function formatAddressInfo(text: string): string | null {
+  const normalized = text.trim().replace(/\s+/g, ' ');
+  if (!/\b(?:street|st|road|rd|avenue|ave|lane|ln|drive|dr|block|sector)\b/i.test(normalized)) {
+    return null;
+  }
+  const address = normalized
+    .split(/\s*,\s*/)
+    .map((part) =>
+      part
+        .split(/\s+/)
+        .map((word) => {
+          if (/^\d+[a-z]$/i.test(word)) return word.slice(0, -1) + word.slice(-1).toUpperCase();
+          return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        })
+        .join(' '),
+    )
+    .join(', ');
+  return `Address:\n${address}`;
+}
+
 /**
  * A subject line. "about X" or "regarding X" in the command is the best signal
  * there is; otherwise the first clause of the message, which is short enough to
  * read in an inbox list and specific enough not to look automated.
  */
 function subjectFor(input: string, message: string): string {
+  const contact = message.match(/^Contact information:\nName:\s*(.+)$/im);
+  if (contact?.[1]) return `Contact information for ${contact[1].trim()}`;
+  if (/^Address:/i.test(message)) return 'Address details';
+
   const about = input.match(/\b(?:about|regarding|re:?)\s+(.{3,60}?)(?:[.,;]|$)/i);
   if (about?.[1]) return capitalise(about[1].trim());
 
