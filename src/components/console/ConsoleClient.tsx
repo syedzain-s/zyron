@@ -1,4 +1,5 @@
 'use client';
+import { MessageSquare } from 'lucide-react';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -461,6 +462,13 @@ export function ConsoleClient() {
                 >
                   <Camera className="h-3.5 w-3.5 shrink-0" />
                   Check in on yourself
+                </Link>
+                <Link
+                  href="/sms"
+                  className="mx-2 mb-2 flex items-center gap-3 rounded-xl border border-gold/25 bg-gold/[0.06] px-3 py-2.5 text-xs text-gold transition-colors hover:bg-gold/12"
+                >
+                  <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                  Text messages
                 </Link>
                 <Link
                   href="/records"

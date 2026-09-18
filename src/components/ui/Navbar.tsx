@@ -12,6 +12,7 @@ const LINKS = [
   { href: '/#architecture', label: 'Architecture' },
   { href: '/#modules', label: 'Modules' },
   { href: '/mood', label: 'Check in' },
+  { href: '/sms', label: 'SMS' },
   { href: '/#approval', label: 'Approval gate' },
   { href: '/#stack', label: 'Build' },
 ];
