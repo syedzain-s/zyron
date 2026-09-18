@@ -280,12 +280,13 @@ async function geminiMedia({
       // Low temperature: this is a reading, not a creative task, and the same
       // input should not produce a different mood on every attempt.
       temperature: 0.2,
-      // No thinkingConfig here. Earlier this set thinkingBudget: 0 to keep the
-      // budget for the answer, but the models "-latest" now points at refuse
-      // to switch thinking off and reject the whole request with a 400 whose
-      // wording the retry net did not recognise. Every camera and voice
-      // check-in failed on that one field while text kept working. Leaving
-      // the model to its default is worth the slightly longer read.
+      // Thinking cannot be switched off on the models "-latest" now points at
+      // (thinkingBudget: 0 was rejected outright, and took every camera and
+      // voice check-in down with it), but it can be turned down. A mood read
+      // does not need deliberation, and "low" cuts several seconds off each
+      // capture. If a model rejects this field too, the retry net below
+      // strips it and sends again.
+      thinkingConfig: { thinkingLevel: 'low' },
       //
       // Asking for JSON is more reliable than asking politely in the prompt:
       // it removes markdown fences and preamble at the source.

@@ -23,22 +23,22 @@ export interface RouteResult {
 const SIGNATURES: Record<string, string[]> = {
   BRF: [
     'briefing', 'brief', 'morning', 'today', 'my day', 'agenda', 'schedule overview',
-    'daily report', 'morning report', 'daily update', 'morning update', 'my update',
-    'give me an update', 'give me update', 'get me an update', 'get me update',
-    'what is the update', 'what is today', 'whats the update', "what's the update",
-    'what is happening', 'what is going on', 'status update', 'updates', 'update',
-    'brf', 'brief me', 'brief me on', 'tell me what is happening',
-    'show response', 'show reply', 'show the response', 'show the reply',
-    'what did', 'what did he say', 'what did she say', 'reply from', 'response from',
     'day summary', 'summary of my day', 'read email', 'read emails', 'recent emails',
     'important email', 'important emails', 'email parho', 'emails parho', 'mail parho',
     'inbox parho', 'read calendar', 'show calendar', 'calendar batao', 'calendar btao',
     'calendar dikhao', 'calendar likho', 'tomorrow plan', 'tomorrow schedule',
     'kal kya karna', 'kal ka plan', 'kal ka schedule',
+    // Questions about the inbox. These contain messaging verbs as nouns
+    // ("need a reply") and used to be routed to the message module, which
+    // staged a draft addressed to nobody with the question as its body.
+    'which emails', 'what emails', 'any emails', 'new emails', 'unread', 'inbox',
+    'need a reply', 'needs a reply', 'need replies', 'waiting for a reply', 'check email',
+    'check emails', 'check my inbox', 'check mail', 'emails need', 'urgent emails',
+    'priority emails', 'kaunsi email', 'konsi email', 'kon si email', 'email check',
   ],
   DSR: ['prep', 'dossier', 'before the meeting', 'background on', 'who am i meeting'],
   CMS: [
-    'send', 'reply', 'message', 'msg', 'email', 'mail', 'draft', 'text', 'respond',
+    'send', 'reply', 'message', 'msg', 'whatsapp', 'email', 'mail', 'draft', 'text', 'respond',
     'dm', 'write to', 'tell', 'inform', 'let know', 'let him know', 'let her know', 'let them know',
     'ping', 'bhejo', 'bhej', 'bhejna', 'likho', 'bolo', 'batao', 'btao', 'kaho', 'kehna', 'keh do',
   ],
@@ -46,18 +46,14 @@ const SIGNATURES: Record<string, string[]> = {
   CLT: ['promise', 'commitment', 'follow up', 'i said i would', 'owe', 'deadline', 'forgetting', 'forgot', 'pending', 'outstanding', 'what do i owe'],
   PSG: ['traffic', 'late', 'delay', 'reschedule', 'move the meeting', 'running behind', 'calendar', 'my schedule', 'next meeting', 'free time', 'am i busy', 'meetings'],
   NEG: ['negotiate', 'negotiation', 'salary', 'raise', 'deal', 'counteroffer', 'practice', 'rehearse'],
-  FIN: [
-    'subscription', 'subscriptions', 'duplicate subscription', 'paying for twice',
-    'charged twice', 'double charged', 'recurring charge', 'invoice', 'receipt',
-    'charge', 'billing', 'refund', 'spend', 'expense',
-  ],
+  FIN: ['subscription', 'invoice', 'receipt', 'charge', 'billing', 'refund', 'spend', 'expense'],
   REP: ['review', 'mention', 'press', 'reputation', 'twitter', 'linkedin', 'sentiment', 'pr'],
   DJB: ['decision', 'decided', 'should i', 'bias', 'outcome', 'looking back'],
   DEL: ['assign', 'delegate', 'team', 'chase', 'nudge', 'handed off'],
   CNT: ['emergency contact', 'if something happens', 'continuity', 'trustee', 'dead man'],
   ROI: ['roi', 'performance report', 'how are you doing', 'saved me', 'impact'],
   TRV: ['flight', 'travel', 'trip', 'hotel', 'airport', 'itinerary', 'visa', 'passport'],
-  DOC: ['contract', 'agreement', 'clause', 'terms', 'legal', 'nda', 'sign', 'pdf', 'document', 'file'],
+  DOC: ['contract', 'agreement', 'clause', 'terms', 'legal', 'nda', 'sign'],
   HHM: ['bill', 'electricity', 'grocery', 'household', 'home', 'maintenance', 'school'],
   CMP: ['tax', 'filing', 'licence', 'license', 'compliance', 'renewal', 'regulatory'],
   PRP: ['rent', 'tenant', 'property', 'landlord', 'lease'],
@@ -82,7 +78,6 @@ const EFFECT_VERBS: Array<{ verb: string; effect: string }> = [
   { verb: 'let .{1,20} know', effect: 'send a message' },
   { verb: 'ping', effect: 'send a message' },
   { verb: 'bhej', effect: 'send a message' },
-  { verb: 'bhejo', effect: 'send a message' },
   { verb: 'bolo', effect: 'send a message' },
   { verb: 'batao', effect: 'send a message' },
   { verb: 'btao', effect: 'send a message' },
@@ -103,6 +98,14 @@ const EFFECT_VERBS: Array<{ verb: string; effect: string }> = [
 ];
 
 const SEALED_CODES = ['CNT', 'CRS', 'LGY', 'PRV'];
+
+/**
+ * Modules that only read. Nothing they do reaches the outside world, so a
+ * command routed to one of them never needs approval — whatever verbs it
+ * happens to contain. "tomorrow schedule" has "schedule" in it, but asking to
+ * see a schedule is not asking to change one.
+ */
+const READ_ONLY_CODES = new Set(['BRF', 'DSR', 'CLT', 'BIO', 'ROI', 'DJB', 'REP', 'FIN']);
 
 const boundaryCache = new Map<string, RegExp>();
 
@@ -150,25 +153,20 @@ function isSmallTalk(text: string): boolean {
   return SMALL_TALK.some((p) => p.test(trimmed));
 }
 
-export function routeIntent(input: string): RouteResult {
-  // Voice notes and fast typing commonly swap these letters. Normalize only
-  // known command words so ordinary user text remains untouched.
-  const text = input
-    .toLowerCase()
-    .replace(/\bbreif\b/g, 'brief')
-    .replace(/\bbrif\b/g, 'brief')
-    .replace(/\bbrieffing\b/g, 'briefing')
-    .replace(/\bupdtae\b/g, 'update');
+/**
+ * "which emails need a reply" is a question; "reply to israr" is an order.
+ * Both contain "reply". The opener is the tell: a question word at the front
+ * means the user wants to be told something, not to have something sent.
+ */
+const QUESTION_OPENER =
+  /^(which|what|what's|whats|who|when|where|why|how|do i|did i|does|is there|are there|any|show|list|read|check|tell me|kya|kaun|kaunsi|kaun si|kon si|konsi|kitni|kitne|batao|btao|dikhao)\b/i;
 
-  // Document inventory is a concrete local operation. Keep it ahead of the
-  // general scorer so phrases such as "show stored PDFs" cannot become small
-  // talk when the user uses a plural or an unfamiliar document label.
-  if (
-    /\b(?:show|list|which|what|give me)\b/i.test(text) &&
-    /\b(?:pdfs?|documents?|files?|contracts?)\b/i.test(text)
-  ) {
-    return { modules: ['DOC'], effects: [], risk: 'autonomous', confidence: 1, general: false };
-  }
+export function isQuestion(input: string): boolean {
+  return QUESTION_OPENER.test(input.trim());
+}
+
+export function routeIntent(input: string): RouteResult {
+  const text = input.toLowerCase();
 
   if (isSmallTalk(input)) {
     return { modules: [], effects: [], risk: 'autonomous', confidence: 1, general: true };
@@ -184,7 +182,12 @@ export function routeIntent(input: string): RouteResult {
     .filter((s) => s.hits > 0)
     .sort((a, b) => b.weight - a.weight);
 
-  const modules = scored.slice(0, 3).map((s) => s.code);
+  let modules = scored.slice(0, 3).map((s) => s.code);
+
+  // A question about mail is a briefing request, whatever verbs it contains.
+  if (isQuestion(input) && modules[0] === 'CMS') {
+    modules = ['BRF', ...modules.filter((c) => c !== 'BRF' && c !== 'CMS')].slice(0, 3);
+  }
 
   // Nothing matched. Answering as some module anyway is worse than admitting
   // it and asking — a wrong module produces a confident, irrelevant answer.
@@ -192,13 +195,17 @@ export function routeIntent(input: string): RouteResult {
     return { modules: [], effects: [], risk: 'autonomous', confidence: 0, general: true };
   }
 
-  const effects = Array.from(
-    new Set(
-      EFFECT_VERBS.filter(({ verb }) => new RegExp(`\\b${verb}`, 'i').test(text)).map(
-        ({ effect }) => effect,
-      ),
-    ),
-  );
+  // Questions have no outside-world effect, and neither do read-only modules.
+  // Nothing is sent by asking, and nothing is sent by reading.
+  const effects = isQuestion(input) || READ_ONLY_CODES.has(modules[0])
+    ? []
+    : Array.from(
+        new Set(
+          EFFECT_VERBS.filter(({ verb }) => new RegExp(`\\b${verb}`, 'i').test(text)).map(
+            ({ effect }) => effect,
+          ),
+        ),
+      );
 
   const risk: RiskLevel = modules.some((c) => SEALED_CODES.includes(c))
     ? 'sealed'
@@ -234,11 +241,11 @@ export function extractRecipient(input: string): string | null {
     // An address written out needs no interpretation, so it is tried first.
     /\b([\w.+-]+@[\w-]+\.[\w.]+)\b/,
     // Roman Urdu puts the name first: "israr ko email karo".
-    /\b([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)\s+ko\s+(?:email|mail|message|msg|text|reply|bhej(?:o|na)?|bolo|batao|kaho)/iu,
-    // Prefer an explicit destination before the broad "email israr" form.
-    /\b(?:to|ko|for)\s+([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)/iu,
+    /\b([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)\s+ko\s+(?:email|mail|message|msg|text|reply|bolo|batao|kaho)/iu,
     // "email israr", "send a message to israr", "reply to israr", "tell israr"
-    /\b(?:reply|respond|write|message|msg|text|email|mail|send|dm|ping|tell|inform|bhej(?:o|na)?)\s+(?:an?\s+|the\s+)?(?:email|message|msg|text|note|mail|reply|pdf|document|file)?\s*(?:(?:to|ko)\s+)?([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)/iu,
+    /\b(?:reply|respond|write|message|msg|text|email|mail|send|dm|ping|tell|inform)\s+(?:an?\s+|the\s+)?(?:email|message|msg|text|note|mail|reply)?\s*(?:(?:to|ko)\s+)?([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)/iu,
+    // Bare "to israr" anywhere, as a last resort.
+    /\b(?:to|ko|for)\s+([\p{L}][\p{L}.'-]{1,30}(?:\s+[\p{L}][\p{L}.'-]{1,30})?)/iu,
   ];
 
   for (const pattern of patterns) {
@@ -286,8 +293,7 @@ const STOP_WORDS = new Set([
   'bhejo', 'bhej', 'bhejna', 'likho', 'kaho', 'kehna', 'how', 'what', 'when', 'where',
   // Nouns that follow a send verb but name a thing, not a person.
   'email', 'mail', 'message', 'msg', 'text', 'note', 'reply', 'draft', 'brief',
-  'briefing', 'report', 'summary', 'update', 'invite', 'pdf', 'document', 'file',
-  'contract', 'agreement', 'something', 'anything',
+  'briefing', 'report', 'summary', 'update', 'invite', 'something', 'anything',
   'everything', 'one', 'quick', 'short',
 ]);
 

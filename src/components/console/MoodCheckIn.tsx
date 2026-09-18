@@ -5,9 +5,6 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft, Camera, Check, Loader2, Mic, Pause, Play, RotateCcw, ShieldCheck, Square, X,
 } from 'lucide-react';
-import { SceneCanvas } from '@/components/three/SceneCanvas';
-import { AgentAvatar, type AvatarState } from '@/components/three/AgentAvatar';
-import { StageLights } from '@/components/three/StageLights';
 import { MOODS, type Mood, type Soundscape, type Technique } from '@/lib/agent/mood';
 import { cn } from '@/lib/utils';
 
@@ -99,25 +96,8 @@ export function MoodCheckIn() {
     setError(null);
   };
 
-  const avatarState: AvatarState =
-    busy ? 'thinking' : stage === 'suggest' ? 'activity' : stage === 'confirm' ? 'speaking' : 'idle';
-
   return (
     <div className="shell relative py-14">
-      {/* Fixed to the viewport rather than parked at the top of the page, so it
-          stays with you through the whole flow instead of scrolling away the
-          moment the activities appear.
-
-          The camera sits well back and the model is scaled down: at the
-          previous distance a standing figure filled the frame and the head was
-          cropped by the header. */}
-      <div className="pointer-events-none fixed bottom-0 right-0 z-0 hidden h-[68vh] w-[34vw] max-w-[520px] lg:block">
-        <SceneCanvas label="mood-avatar" camera={{ position: [0, 1.1, 12], fov: 38 }}>
-          <StageLights />
-          <AgentAvatar state={avatarState} position={[0, -1.4, 0]} followPointer={false} />
-        </SceneCanvas>
-      </div>
-
       <header className="relative z-10 mb-12 max-w-3xl">
         <span className="eyebrow">BIO · Energy &amp; Stress</span>
         <h1 className="mt-6 font-display text-display-lg text-cream">How are you, actually?</h1>
