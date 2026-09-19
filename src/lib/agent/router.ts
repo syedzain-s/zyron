@@ -296,7 +296,10 @@ export function extractRecipient(input: string): string | null {
     }
     if (words.length === 0) continue;
 
-    const name = words.join(' ');
+    // Voice input ends sentences with a full stop: "Send email to Israr." The
+    // dot is not part of anyone's name, and it made the mailbox search miss.
+    const name = words.join(' ').replace(/[.,;:!?'"]+$/, '');
+    if (!name) continue;
     if (STOP_WORDS.has(name.toLowerCase())) continue;
     return name;
   }
