@@ -13,7 +13,7 @@ const LINKS = [
   { href: '/#modules', label: 'Modules' },
   { href: '/mood', label: 'Check in' },
   { href: '/sms', label: 'SMS' },
-  { href: '/#approval', label: 'Approval gate' },
+  { href: '/#about', label: 'About' },
   { href: '/#stack', label: 'Build' },
 ];
 

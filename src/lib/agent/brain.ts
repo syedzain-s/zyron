@@ -392,10 +392,12 @@ export async function think(
       .catch(() => [] as DocumentSummary[]);
     const selected = selectDocument(message, documents);
     if (mentionsDocument(message) && !selected) {
+      const titles = documents.slice(0, 6).map((d, i) => `${i + 1}. ${d.title}`).join('\n');
       return {
-        body: documents.length > 0
-          ? 'I found the stored contract record, but its original PDF bytes are unavailable. Upload the PDF again before I send it; I will not send a text-only email by mistake.'
-          : 'I cannot find a stored PDF to attach. Upload the contract first, then ask me to send it.',
+        body:
+          documents.length > 0
+            ? `I could not tell which PDF you mean. Stored:\n${titles}\nSay one distinctive word from the title, for example "send the ${firstTitleWord(documents[0].title)} pdf to ${extractRecipient(message) ?? 'them'}".`
+            : 'No PDF is stored yet. Drop the file into this window first, then ask me to send it.',
         routedTo: route.modules,
         mode: 'simulation',
         grounded: true,
@@ -800,6 +802,27 @@ async function storedDocumentsResponse(route: RouteResult): Promise<BrainReply> 
   return { body: lines.join('\n'), routedTo: route.modules, mode: 'simulation', grounded: true };
 }
 
+/** "Assignemnt" is "assignment" with two letters swapped. Close enough to match a title. */
+function closeEnough(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 2 || a.length < 5) return false;
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i += 1) {
+    let last = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const tmp = prev[j];
+      prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, last + (a[i - 1] === b[j - 1] ? 0 : 1));
+      last = tmp;
+    }
+  }
+  return prev[b.length] <= 2;
+}
+
+function firstTitleWord(title: string): string {
+  return title.toLowerCase().match(/[\p{L}\d]{4,}/u)?.[0] ?? title.split(/\s+/)[0];
+}
+
 function selectDocument(message: string, documents: DocumentSummary[]) {
   const available = documents.filter((document) => document.kind === 'pdf' && document.bytes > 0);
   const words = new Set(
@@ -822,7 +845,7 @@ function selectDocument(message: string, documents: DocumentSummary[]) {
       (w) =>
         !ignored.has(w) &&
         w.length >= 4 &&
-        (titleWords.includes(w) || joined.includes(w) || titleWords.some((t) => t.length >= 4 && (t.startsWith(w) || w.startsWith(t)))),
+        (titleWords.includes(w) || joined.includes(w) || titleWords.some((t) => t.length >= 4 && (t.startsWith(w) || w.startsWith(t) || closeEnough(w, t)))),
     );
   });
 
