@@ -826,7 +826,7 @@ function firstTitleWord(title: string): string {
 function selectDocument(message: string, documents: DocumentSummary[]) {
   const available = documents.filter((document) => document.kind === 'pdf' && document.bytes > 0);
   const words = new Set(
-    message.toLowerCase().match(/[\p{L}\d][\p{L}\d_-]{1,40}/gu) ?? [],
+    message.toLowerCase().match(/[\p{L}\d][\p{L}\d_-]{1,40}/gu) ?? ([] as string[]),
   );
   const ignored = new Set([
     'send', 'email', 'mail', 'message', 'text', 'reply', 'tell', 'inform', 'to', 'ko',
@@ -837,7 +837,7 @@ function selectDocument(message: string, documents: DocumentSummary[]) {
     const titleWords = document.title
       .toLowerCase()
       .replace(/\.[^.]+$/, '')
-      .match(/[\p{L}\d][\p{L}\d_-]{1,40}/gu) ?? [];
+      .match(/[\p{L}\d][\p{L}\d_-]{1,40}/gu) ?? ([] as string[]);
     // "datesheet" must find "Date Sheet": compare with spaces removed too, and
     // let a long message word match the start of a title word.
     const joined = titleWords.join('');

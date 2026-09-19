@@ -680,7 +680,7 @@ function SuggestStep({
     <div className="relative z-10 space-y-8 lg:max-w-3xl">
       <div className="flex flex-wrap items-baseline justify-between gap-4">
         <div>
-          <span className="eyebrow">Try one of these</span>
+          <span className="eyebrow">Pick one that fits</span>
           <p className="mt-3 text-[1.0625rem] text-ash">{suggestion.reading}</p>
         </div>
         <button
@@ -876,20 +876,52 @@ function BreathPacer({ pacer }: { pacer: NonNullable<Technique['pacer']> }) {
  */
 function SoundscapeDeck({ soundscapes }: { soundscapes: Soundscape[] }) {
   const [playing, setPlaying] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const stopRef = useRef<(() => void) | null>(null);
 
   useEffect(() => () => {
     stopRef.current?.();
+    audioRef.current?.pause();
     void ctxRef.current?.close();
   }, []);
 
-  const toggle = async (scape: Soundscape) => {
+  const stopAll = () => {
     stopRef.current?.();
     stopRef.current = null;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+  };
+
+  const toggle = async (scape: Soundscape) => {
+    stopAll();
+    setFailed(null);
 
     if (playing === scape.id) {
       setPlaying(null);
+      return;
+    }
+
+    if (scape.recipe === 'stream' && scape.url) {
+      // A hosted recording. Same rule as the synthesised sound: one thing at a
+      // time, stopped cleanly, started only from a tap.
+      const audio = new Audio(scape.url);
+      audio.preload = 'auto';
+      audio.onended = () => setPlaying((cur) => (cur === scape.id ? null : cur));
+      audio.onerror = () => {
+        setFailed(scape.id);
+        setPlaying((cur) => (cur === scape.id ? null : cur));
+      };
+      audioRef.current = audio;
+      try {
+        await audio.play();
+        setPlaying(scape.id);
+      } catch {
+        setFailed(scape.id);
+      }
       return;
     }
 
@@ -903,40 +935,77 @@ function SoundscapeDeck({ soundscapes }: { soundscapes: Soundscape[] }) {
     setPlaying(scape.id);
   };
 
+  const quran = soundscapes.filter((s) => s.category === 'quran');
+  const ambient = soundscapes.filter((s) => s.category !== 'quran');
+
   return (
-    <div>
-      <span className="eyebrow">Something to listen to</span>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        {soundscapes.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => toggle(s)}
-            className={cn(
-              'flex items-center gap-4 rounded-2xl border p-4 text-left transition-colors',
-              playing === s.id ? 'border-gold/45 bg-gold/[0.07]' : 'border-cream/10 hover:border-gold/30',
-            )}
-          >
-            <span
-              className={cn(
-                'grid h-10 w-10 shrink-0 place-items-center rounded-full border',
-                playing === s.id ? 'border-gold bg-gold text-ink' : 'border-gold/40 text-gold',
-              )}
-            >
-              {playing === s.id ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-            </span>
-            <span className="min-w-0">
-              <span className="block text-sm font-medium text-cream">{s.title}</span>
-              <span className="mt-0.5 block text-xs leading-relaxed text-ash">{s.blurb}</span>
-            </span>
-          </button>
-        ))}
-      </div>
+    <div className="space-y-6">
+      {quran.length > 0 && (
+        <div>
+          <span className="eyebrow">Recitation</span>
+          <p className="mt-2 text-xs text-ash/60">Mishary Rashid Alafasy. Streams over the internet.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {quran.map((s) => (
+              <SoundButton key={s.id} scape={s} active={playing === s.id} failed={failed === s.id} onToggle={() => toggle(s)} />
+            ))}
+          </div>
+        </div>
+      )}
+      {ambient.length > 0 && (
+        <div>
+          <span className="eyebrow">Ambient sound</span>
+          <p className="mt-2 text-xs text-ash/60">Made in the browser. Works offline.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {ambient.map((s) => (
+              <SoundButton key={s.id} scape={s} active={playing === s.id} failed={failed === s.id} onToggle={() => toggle(s)} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function SoundButton({
+  scape,
+  active,
+  failed,
+  onToggle,
+}: {
+  scape: Soundscape;
+  active: boolean;
+  failed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      className={cn(
+        'flex items-center gap-4 rounded-2xl border p-4 text-left transition-colors',
+        active ? 'border-gold/45 bg-gold/[0.07]' : 'border-cream/10 hover:border-gold/30',
+      )}
+    >
+      <span
+        className={cn(
+          'grid h-10 w-10 shrink-0 place-items-center rounded-full border',
+          active ? 'border-gold bg-gold text-ink' : 'border-gold/40 text-gold',
+        )}
+      >
+        {active ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-cream">{scape.title}</span>
+        <span className="mt-0.5 block text-xs leading-relaxed text-ash">
+          {failed ? 'Could not load. Check the connection and try again.' : scape.blurb}
+        </span>
+      </span>
+    </button>
   );
 }
 
 /** Returns a stop function. Each recipe is a small graph of noise and filters. */
 function startSoundscape(ctx: AudioContext, recipe: Soundscape['recipe']): () => void {
+  // 'stream' is handled by an <audio> element in SoundscapeDeck, never here.
   const master = ctx.createGain();
   master.gain.setValueAtTime(0, ctx.currentTime);
   master.gain.linearRampToValueAtTime(0.22, ctx.currentTime + 1.2);
