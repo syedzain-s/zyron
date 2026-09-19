@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { analyseContract } from '@/lib/agent/contracts';
+import { analyseDocument } from '@/lib/agent/contracts';
 import { ExtractionError, MAX_BYTES, extractDocument } from '@/lib/agent/documents';
 import { ModelError, readImage, visionAvailable } from '@/lib/agent/providers';
 import { DEFAULT_USER, getDocumentStore } from '@/lib/db/documents';
@@ -83,7 +83,7 @@ export async function POST(req: Request) {
         bytes: bytes.byteLength,
       };
     }
-    const report = analyseContract(extracted.text, extracted.title);
+    const report = await analyseDocument(extracted.text, extracted.title);
 
     if (originalBytes.byteLength === 0) {
       throw new ExtractionError('The original PDF could not be retained. Upload the file again before storing it.');

@@ -290,9 +290,9 @@ export function ConsoleClient() {
 
   const removeDocument = useCallback(async (streamId: string, documentId?: string) => {
     setMessages((prev) => prev.filter((m) => m.id !== streamId));
-    if (documentId) {
-      await fetch(`/api/contracts?id=${documentId}`, { method: 'DELETE' }).catch(() => undefined);
-    }
+    // The card is hidden, not the document: it stays in the library so it can
+    // be attached later. Deleting is a separate, deliberate action.
+    void documentId;
   }, []);
 
   /* Drag events fire for every child element, so depth is counted rather than

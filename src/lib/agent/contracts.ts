@@ -1,17 +1,45 @@
 /**
- * Contract Intelligence — the analysis engine behind the DOC module.
+ * Document Intelligence — the analysis engine behind the DOC module.
  *
- * Deliberately written as pure functions over plain text: no PDF library, no
- * database, no model call. That means it can be unit tested, it runs in
- * milliseconds, and — most importantly — the risk findings are reproducible
- * and explainable. A reviewer can point at the exact rule that fired.
+ * Two layers, deliberately separate:
  *
- * A model is good at summarising a contract. It is not good at being
- * consistent about the same clause twice. Detection stays deterministic;
- * the model layer only ever adds prose on top.
+ *   1. Understanding — what kind of document this is, what it says in two
+ *      lines, whether it needs a signature, the handful of facts worth
+ *      remembering. A model writes this (it is good at summarising) with a
+ *      rule-based fallback so an outage never blanks the card.
+ *
+ *   2. Risk — deterministic clause detection, contracts only. A model is not
+ *      consistent about the same clause twice; these rules are, and a reviewer
+ *      can point at the exact pattern that fired.
+ *
+ * A date sheet is not a contract and is not judged like one. It gets layer 1
+ * and nothing else.
  */
 
+import { generateText, textProvider } from '@/lib/agent/providers';
+
 export type Severity = 'high' | 'medium' | 'low' | 'info';
+
+export type DocType =
+  | 'contract'
+  | 'schedule'
+  | 'assignment'
+  | 'invoice'
+  | 'notice'
+  | 'letter'
+  | 'form'
+  | 'other';
+
+export const DOC_TYPE_LABEL: Record<DocType, string> = {
+  contract: 'Contract',
+  schedule: 'Schedule',
+  assignment: 'Assignment',
+  invoice: 'Invoice',
+  notice: 'Notice',
+  letter: 'Letter',
+  form: 'Form',
+  other: 'Document',
+};
 
 export interface ClauseFinding {
   id: string;
@@ -47,6 +75,174 @@ export interface ContractReport {
   parties: string[];
   /** Standard protections we looked for and did NOT find. */
   missing: string[];
+
+  // Understanding layer. Optional so reports stored before it existed still render.
+  docType?: DocType;
+  /** Two sentences, plain language: what this is and what it is for. */
+  summary?: string;
+  /** Facts worth remembering: dates, amounts, who, where. At most six. */
+  keyPoints?: string[];
+  needsSignature?: boolean;
+  /** Why it does or does not need signing, one line. */
+  signatureNote?: string;
+  /** 'model' when a model wrote the summary, 'rules' when the fallback did. */
+  understoodBy?: 'model' | 'rules';
+}
+
+/* ─────────────────────────── Understanding ─────────────────────────── */
+
+const TYPE_SIGNALS: Record<Exclude<DocType, 'other'>, RegExp[]> = {
+  contract: [
+    /\b(agreement|contract|parties|party of the (?:first|second) part|hereby|whereas|terms and conditions|indemnif\w*|liabilit\w*|governing law|termination|in witness whereof)\b/gi,
+  ],
+  schedule: [
+    /\b(date ?sheet|time ?table|schedule|examination|exam|mid ?term|final ?term|paper|venue|session|slot|semester)\b/gi,
+  ],
+  assignment: [
+    /\b(assignment|homework|submission|submit(?:ted)? by|due date|marks|rubric|question \d|q\.?\s?\d|plagiarism|course code)\b/gi,
+  ],
+  invoice: [
+    /\b(invoice|receipt|amount due|total due|bill to|subtotal|grand total|payment terms|tax invoice|rs\.?\s?\d|pkr)\b/gi,
+  ],
+  notice: [
+    /\b(notice|notification|circular|announcement|hereby informed|all students|all employees|memo(?:randum)?|with immediate effect)\b/gi,
+  ],
+  letter: [/\b(dear\s+\w+|sincerely|yours faithfully|yours truly|best regards|kind regards|to whom it may concern)\b/gi],
+  form: [
+    /\b(application form|applicant|date of birth|cnic|father'?s name|fill in|tick|signature of applicant|for office use)\b/gi,
+  ],
+};
+
+export function classifyDocument(text: string, title: string): DocType {
+  const body = text.slice(0, 20_000);
+  let best: DocType = 'other';
+  let bestScore = 0;
+  for (const [type, patterns] of Object.entries(TYPE_SIGNALS) as Array<[Exclude<DocType, 'other'>, RegExp[]]>) {
+    let score = 0;
+    for (const p of patterns) {
+      score += (body.match(p) ?? []).length;
+      // The title is the strongest single signal: "Date Sheet" says it all.
+      score += (title.match(p) ?? []).length * 4;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = type;
+    }
+  }
+  return bestScore >= 2 ? best : 'other';
+}
+
+const SIGNATURE_ASK =
+  /\b(please sign|sign (?:here|below|and return)|signature[:\s]*_{2,}|signed[:\s]*_{2,}|authori[sz]ed signator\w*|the undersigned|by signing|countersign|_{6,})/i;
+
+function signatureFor(text: string, type: DocType): { needsSignature: boolean; signatureNote: string } {
+  if (SIGNATURE_ASK.test(text)) {
+    return { needsSignature: true, signatureNote: 'The document has a signature line or asks you to sign and return it.' };
+  }
+  if (type === 'contract') {
+    return { needsSignature: true, signatureNote: 'Contracts take effect when signed. Read the flagged clauses first.' };
+  }
+  if (type === 'form') {
+    return { needsSignature: true, signatureNote: 'Forms usually need the applicant\u2019s signature before submission.' };
+  }
+  return { needsSignature: false, signatureNote: 'Nothing here asks for your signature. It is for reading, not signing.' };
+}
+
+const ANY_DATE =
+  /\b(\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?,?\s+\d{4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}|\d{4}-\d{2}-\d{2})\b/g;
+const ANY_AMOUNT = /\b(?:Rs\.?|PKR|USD|\$|€|£)\s?[\d,]+(?:\.\d+)?\b/g;
+
+/** No model: the summary is the first two real sentences, key points are the dates and amounts. */
+function understandByRules(text: string, title: string, type: DocType) {
+  const sentences = text
+    .replace(/\s+/g, ' ')
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 30 && s.length < 260 && /[a-z]/i.test(s));
+
+  const opening = sentences.slice(0, 2).join(' ');
+  const summary = opening
+    ? `${DOC_TYPE_LABEL[type]}: ${title}. ${opening}`
+    : `${DOC_TYPE_LABEL[type]}: ${title}. The text did not have readable sentences to summarise.`;
+
+  const points = new Set<string>();
+  for (const m of text.match(ANY_DATE) ?? []) points.add(`Date: ${m}`);
+  for (const m of text.match(ANY_AMOUNT) ?? []) points.add(`Amount: ${m}`);
+  return {
+    summary: summary.slice(0, 400),
+    keyPoints: Array.from(points).slice(0, 6),
+    ...signatureFor(text, type),
+  };
+}
+
+/**
+ * The full report. Classification and risk are synchronous and deterministic;
+ * the summary comes from the text model when one is configured, with the rule
+ * fallback if it is slow, down or returns something unparseable.
+ */
+export async function analyseDocument(text: string, title = 'Untitled document'): Promise<ContractReport> {
+  const type = classifyDocument(text, title);
+  const base = analyseContract(text, title);
+  const rules = understandByRules(text, title, type);
+
+  // Non-contracts should not carry a contract verdict.
+  if (type !== 'contract') {
+    base.verdict =
+      base.findings.length > 0
+        ? 'Not a contract, but a few clause-like lines were noticed below.'
+        : 'Read-only document. No clauses to check.';
+    base.missing = [];
+  }
+
+  let understood: Partial<ContractReport> = { ...rules, understoodBy: 'rules' };
+
+  if (textProvider() !== 'none') {
+    try {
+      const raw = await generateText({
+        system: `You read a document and describe it for its owner. Reply with JSON only, no prose, no markdown fences:
+{"summary": "two plain sentences: what this document is and what it is for, naming the institution, course, parties or amounts if present",
+ "keyPoints": ["up to six short facts worth remembering: dates, deadlines, amounts, venues, names, what is required of the reader"],
+ "needsSignature": true or false,
+ "signatureNote": "one line on why it does or does not need signing"}
+Never invent facts. If something is not in the text, leave it out.`,
+        messages: [
+          {
+            role: 'user',
+            content: `Title: ${title}\nDetected type: ${DOC_TYPE_LABEL[type]}\n\n${text.slice(0, 7_000)}`,
+          },
+        ],
+        maxTokens: 500,
+        temperature: 0.2,
+      });
+      const clean = raw.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(clean.slice(clean.indexOf('{'), clean.lastIndexOf('}') + 1)) as {
+        summary?: string;
+        keyPoints?: string[];
+        needsSignature?: boolean;
+        signatureNote?: string;
+      };
+      if (typeof parsed.summary === 'string' && parsed.summary.trim()) {
+        understood = {
+          summary: parsed.summary.trim().slice(0, 500),
+          keyPoints: Array.isArray(parsed.keyPoints)
+            ? parsed.keyPoints.filter((p) => typeof p === 'string' && p.trim()).slice(0, 6).map((p) => p.trim())
+            : rules.keyPoints,
+          // The rule detector wins when it saw a signature line; the model may miss underscores.
+          needsSignature: rules.needsSignature || Boolean(parsed.needsSignature),
+          signatureNote: rules.needsSignature
+            ? rules.signatureNote
+            : typeof parsed.signatureNote === 'string' && parsed.signatureNote.trim()
+              ? parsed.signatureNote.trim()
+              : rules.signatureNote,
+          understoodBy: 'model',
+        };
+      }
+    } catch (error) {
+      console.warn('[zyron] document summary fell back to rules', error instanceof Error ? error.message : error);
+    }
+  }
+
+  return { ...base, docType: type, ...understood };
 }
 
 /* ─────────────────────────── Detection rules ─────────────────────────── */

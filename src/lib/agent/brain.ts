@@ -808,13 +808,22 @@ function selectDocument(message: string, documents: DocumentSummary[]) {
   const ignored = new Set([
     'send', 'email', 'mail', 'message', 'text', 'reply', 'tell', 'inform', 'to', 'ko',
     'bhej', 'bhejo', 'bhejna', 'pdf', 'document', 'file', 'please', 'and',
+    'wala', 'wali', 'walay', 'ka', 'ki', 'ke', 'say', 'saying', 'that', 'nd', 'aur', 'attach', 'attached', 'with',
   ]);
   const named = available.find((document) => {
     const titleWords = document.title
       .toLowerCase()
       .replace(/\.[^.]+$/, '')
       .match(/[\p{L}\d][\p{L}\d_-]{1,40}/gu) ?? [];
-    return titleWords.some((word) => !ignored.has(word) && words.has(word));
+    // "datesheet" must find "Date Sheet": compare with spaces removed too, and
+    // let a long message word match the start of a title word.
+    const joined = titleWords.join('');
+    return Array.from(words).some(
+      (w) =>
+        !ignored.has(w) &&
+        w.length >= 4 &&
+        (titleWords.includes(w) || joined.includes(w) || titleWords.some((t) => t.length >= 4 && (t.startsWith(w) || w.startsWith(t)))),
+    );
   });
 
   if (named) return named;
